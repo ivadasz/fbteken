@@ -313,7 +313,7 @@ rop32_blit1(struct rop_obj *self, point pos, uint8_t *src, int w, int h,
 }
 
 static void
-rop32_drawhoriz(struct rop_obj *self, point start, point end, color col) 
+rop32_drawhoriz(struct rop_obj *self, point start, point end, color col)
 {
 	uint32_t *p;
 	int16_t a, b;
@@ -332,7 +332,7 @@ rop32_drawhoriz(struct rop_obj *self, point start, point end, color col)
 }
 
 static void
-rop32_drawvert(struct rop_obj *self, point start, point end, color col) 
+rop32_drawvert(struct rop_obj *self, point start, point end, color col)
 {
 	uint32_t *p;
 	int16_t a, b;
