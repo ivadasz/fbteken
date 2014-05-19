@@ -1,0 +1,27 @@
+CC = gcc
+CFLAGS = -O2 -march=native -pipe
+CFLAGS += -I/usr/include/libdrm -I/usr/include/libkms -I/usr/include/freetype2
+LDFLAGS = -s
+LDFLAGS += -lpthread -lutil -ldrm -lkms -lfreetype
+
+# Settings for finding the header files for libteken
+#CFLAGS += -I/var/tmp/teken
+CFLAGS += -I/home/vadaszi/teken
+# Settings for linking against libteken
+#LDFLAGS += -lteken -L/var/tmp/teken/libteken -Wl,-rpath=/var/tmp/teken/libteken
+LDFLAGS += -lteken -L/home/vadaszi/teken/libteken -Wl,-rpath=/home/vadaszi/teken/libteken
+
+OBJECTS = fbteken.o rop32.o
+
+all: fbteken
+
+fbteken: $(OBJECTS)
+	$(CC) -o $@ $(OBJECTS) $(LDFLAGS)
+
+.c.o:
+	$(CC) -c $(CFLAGS) $<
+
+clean:
+	rm -f fbteken $(OBJECTS)
+
+.PHONY: clean
