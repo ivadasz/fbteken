@@ -30,13 +30,16 @@
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
+#include <err.h>
 #ifdef __linux__
 #include <pty.h>
 #endif
-#include <unistd.h>
 #include <libgen.h>
+#include <libutil.h>
 #include <pthread.h>
 #include <termios.h>
+#include <poll.h>
 
 #include <sys/param.h>
 #ifdef __linux__
@@ -92,7 +95,7 @@ bool active = true;
 
 struct rop_obj *rop;
 int fnwidth, fnheight;
-pthread_t mousethr, ttythr;
+pthread_t kbdthr, mousethr, ttythr;
 struct termios origtios;
 
 struct winsize winsz = {
@@ -180,12 +183,12 @@ render_cell(uint16_t col, uint16_t row)
 		fg = attr->ta_fgcolor;
 		bg = attr->ta_bgcolor;
 	}
-	if (fg >= 0 && fg < TC_NCOLORS)
+	if (fg >= 0 && fg < TC_NCOLORS) {
 		if (attr->ta_format & TF_BOLD)
 			fg = colormap[fg + TC_NCOLORS];
 		else
 			fg = colormap[fg];
-	else {
+	} else {
 		fg = colormap[TC_WHITE];
 		err(1, "color out of range: %d\n", attr->ta_fgcolor);
 	}
@@ -496,29 +499,79 @@ rdmaster(void)
 	return val;
 }
 
+/* Reading keyboard input */
+void *
+keyboard_thread(void *arg)
+{
+	char buf[16];
+	char *kbdpath = "/dev/kbd0";
+	struct pollfd fds;
+	int kbdfd, val;
+
+	kbdfd = open(kbdpath, O_RDWR | O_NONBLOCK);
+	if (kbdfd < 0) {
+		warn("%s", kbdpath);
+		pthread_exit(NULL);
+	}
+	fds.fd = kbdfd;
+	fds.events = POLLIN;
+	fds.revents = 0;
+
+	while (1) {
+		if (poll(&fds, 1, 5000) > 0) {
+			val = read(kbdfd, buf, 1);
+			if (val == 0) {
+				break;
+			} else if (val == -1) {
+				warn("%s", kbdpath);
+//				pthread_exit(NULL);
+			} else {
+				printf("val: %d\n", val);
+
+				/* XXX */
+			}
+		}
+	}
+
+	close(kbdfd);
+
+	return NULL;
+}
+
 /* Reading mouse input */
 void *
 mouse_thread(void *arg)
 {
-	char buf[128];
+	char buf[16];
 	char *mousepath = "/dev/psm0";
+	struct pollfd fds;
 	int mousefd, val;
 
-	mousefd = open(mousepath, O_RDONLY);
+	mousefd = open(mousepath, O_RDWR | O_NONBLOCK);
 	if (mousefd < 0) {
 		warn("%s", mousepath);
 		pthread_exit(NULL);
 	}
+	fds.fd = mousefd;
+	fds.events = POLLIN;
+	fds.revents = 0;
 
 	while (1) {
-		val = read(mousefd, buf, 128);
-		if (val == 0) {
-			break;
-		} else if ( val == -1) {
-			perror("read");
-			pthread_exit(NULL);
+		if (poll(&fds, 1, 5000) > 0) {
+			val = read(mousefd, buf, 3);
+			if (val == 0) {
+				break;
+			} else if (val == -1) {
+				warn("%s", mousepath);
+//				pthread_exit(NULL);
+			} else {
+				printf("val: %d\n", val);
+
+				/* XXX */
+			}
+		} else {
+//			printf("timeout\n");
 		}
-		printf("val: %d\n", val);
 	}
 
 	close(mousefd);
@@ -657,10 +710,10 @@ main(int argc, char *argv[])
 	 * Font settings. alpha=true can only be used for truetype fonts
 	 * to enable antialiased font rendering.
 	 */
-//	char *normalfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
-//	char *boldfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
-	char *normalfont = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf";
-	char *boldfont = "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+	char *normalfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
+	char *boldfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+//	char *normalfont = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf";
+//	char *boldfont = "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 	unsigned int fontheight = 16;
 	bool alpha = true;
 #if 0
@@ -807,6 +860,7 @@ main(int argc, char *argv[])
 	drmcrtc = crtc;
 	drmconn = conn;
 	drmfbid = fb_id;
+	printf("before setcrtc\n");
 
 	drmModeSetCrtc(fd, crtc->crtc_id, fb_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
 	vtconfigure();
@@ -839,6 +893,7 @@ main(int argc, char *argv[])
 	}
 
 	pthread_create(&ttythr, NULL, tty_thread, NULL);
+	pthread_create(&kbdthr, NULL, keyboard_thread, NULL);
 	pthread_create(&mousethr, NULL, mouse_thread, NULL);
 	while (1) {
 		if (rdmaster() <= 0)
