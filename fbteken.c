@@ -95,7 +95,7 @@ bool active = true;
 
 struct rop_obj *rop;
 int fnwidth, fnheight;
-pthread_t kbdthr, mousethr, ttythr;
+pthread_t kbdthr, mousethr, renderthr, ttythr;
 struct termios origtios;
 
 struct winsize winsz = {
@@ -145,6 +145,10 @@ teken_attr_t defattr = {
 	ta_fgcolor : TC_WHITE,
 	ta_bgcolor : TC_BLACK,
 };
+
+#ifdef JUMP_SCROLL
+pthread_mutex_t bufmtx = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 #ifdef JUMP_SCROLL
 void
@@ -381,6 +385,7 @@ vtenter(int signum)
 	active = true;
 }
 
+/* XXX Create a new free vty like Xorg does */
 void
 vtconfigure(void)
 {
@@ -461,11 +466,11 @@ rdmaster(void)
 	int i, val;
 	char s[0x1000];
 	teken_pos_t oc;
-	uint32_t idx;
 
 	val = read(amaster, s, 0x1000);
 	if (val > 0) {
 #ifdef JUMP_SCROLL
+		pthread_mutex_lock(&bufmtx);
 		dirtycount = 0;
 #endif
 		oc = cursorpos;
@@ -483,6 +488,29 @@ rdmaster(void)
 #endif
 		}
 #ifdef JUMP_SCROLL
+		pthread_mutex_unlock(&bufmtx);
+#endif
+	}
+
+	return val;
+}
+
+#ifdef JUMP_SCROLL
+/* Render thread */
+void *
+render_thread(void *arg)
+{
+	struct timespec ts = { 0, (1000 * 1000 * 1000) / 50 };
+	uint32_t idx;
+	int i;
+
+	/*
+	 * XXX Instead of a timer, do vsync via drm (i.e. by reading from the
+	 *     drm device file).
+	 */
+	for (;;) {
+		nanosleep(&ts, NULL);
+		pthread_mutex_lock(&bufmtx);
 		for (i = 0; i < dirtycount; i++) {
 			idx = dirtybuf[i];
 			if (termbuf[idx].dirty) {
@@ -490,11 +518,10 @@ rdmaster(void)
 				render_cell(idx % winsz.ws_col, idx / winsz.ws_col);
 			}
 		}
-#endif
+		pthread_mutex_unlock(&bufmtx);
 	}
-
-	return val;
 }
+#endif
 
 /* Reading keyboard input */
 void *
@@ -892,6 +919,7 @@ main(int argc, char *argv[])
 	pthread_create(&ttythr, NULL, tty_thread, NULL);
 	pthread_create(&kbdthr, NULL, keyboard_thread, NULL);
 	pthread_create(&mousethr, NULL, mouse_thread, NULL);
+	pthread_create(&renderthr, NULL, render_thread, NULL);
 	while (1) {
 		if (rdmaster() <= 0)
 			break;
