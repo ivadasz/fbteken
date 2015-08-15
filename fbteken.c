@@ -707,10 +707,10 @@ main(int argc, char *argv[])
 	 * Font settings. alpha=true can only be used for truetype fonts
 	 * to enable antialiased font rendering.
 	 */
-	char *normalfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
-	char *boldfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
-//	char *normalfont = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf";
-//	char *boldfont = "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+//	char *normalfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
+//	char *boldfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+	char *normalfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
+	char *boldfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 	unsigned int fontheight = 16;
 	bool alpha = true;
 #if 0
