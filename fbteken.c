@@ -355,7 +355,7 @@ vtleave(int signum)
 		perror("drmModeSetCrtc");
 	if (drmDropMaster(drmfd) != 0)
 		perror("drmDropMaster");
-	ioctl(ttyfd, VT_RELDISP, 1);
+	ioctl(ttyfd, VT_RELDISP, VT_TRUE);
 	active = false;
 }
 
@@ -368,8 +368,11 @@ fbteken_respond(void *thunk, const void *arg, size_t sz)
 void
 vtenter(int signum)
 {
+	int ret;
+
 	printf("activating vt\n");
-	ioctl(ttyfd, VT_ACKACQ, 1);
+	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
+	ret = ioctl(ttyfd, VT_ACTIVATE, &vtnum);
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
 	if (drmSetMaster(drmfd) != 0)
 		perror("drmSetMaster");
@@ -393,8 +396,6 @@ vtconfigure(void)
 		printf("open /dev/tty failed\n");
 	}
 	ttyfd = fd;
-#ifdef __linux__
-	/* XXX Doesn't work on DragonFly yet, VT_SETMODE seems to fail */
 	ret = ioctl(fd, VT_GETMODE, &m);
 	if(ret != 0) {
 		printf("ioctl VT_GETMODE failed\n");
@@ -402,7 +403,7 @@ vtconfigure(void)
 	m.mode = VT_PROCESS;
 	m.relsig = SIGUSR1;
 	m.acqsig = SIGUSR2;
-#ifdef __dragonfly__
+#ifdef __DragonFly__
 	m.frsig = SIGIO; /* not used, but has to be set anyway */
 #endif
 	ret = ioctl(fd, VT_SETMODE, &m);
@@ -423,7 +424,6 @@ vtconfigure(void)
 #endif
 	signal(SIGUSR1, vtleave);
 	signal(SIGUSR2, vtenter);
-#endif	/* defined(__linux__) */
 	/* Putting the tty into raw mode */
 	tcgetattr(fd, &tios);
 	origtios = tios;
@@ -438,8 +438,6 @@ vtdeconf(void)
 	struct vt_mode m;
 
 	fd = ttyfd;
-#ifdef __linux__
-	/* XXX Doesn't work on DragonFly yet, VT_SETMODE seems to fail */
 	ret = ioctl(fd, VT_GETMODE, &m);
 	if(ret != 0) {
 		printf("ioctl VT_GETMODE failed\n");
@@ -451,7 +449,6 @@ vtdeconf(void)
 	}
 	signal(SIGUSR1, SIG_IGN);
 	signal(SIGUSR2, SIG_IGN);
-#endif	/* defined(__linux__) */
 	/* Set tty settings to original values */
 	tcsetattr(fd, TCSAFLUSH, &origtios);
 

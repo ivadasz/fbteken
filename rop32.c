@@ -500,7 +500,6 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 {
 	FT_Int idx;
 	FTC_SBit sbit;
-	FT_GlyphSlot slot = (flags & 2) ? self->boldface->glyph : self->face->glyph;
 	int error;
 	int16_t bty;
 
@@ -559,7 +558,6 @@ point
 rop32_text(struct rop_obj *self, point pos, color fg, color bg, char *str,
     int flags)
 {
-	FT_GlyphSlot slot = self->face->glyph;
 	int i, m, error;
 	int pen_x, pen_y;
 
