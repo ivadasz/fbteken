@@ -1,5 +1,12 @@
 Depends on libdrm, libteken (from the FreeBSD base system) and libfreetype.
 
+On DragonFly BSD, libteken currently needs to be copied from the FreeBSD
+source tree and manually built.
+
+Only tested on DragonFly BSD so far, but it's likely that everything
+builds and works with minor adjustments on FreeBSD.
+
+
 TODO
 
 Use libevent2 instead of separate threads.
