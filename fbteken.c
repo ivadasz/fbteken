@@ -153,6 +153,14 @@ dirty_cell(uint16_t col, uint16_t row)
 		dirtybuf[dirtycount] = row * winsz.ws_col + col;
 		dirtycount++;
 	}
+	if (dirtycount == 1) {
+		drmVBlank req = {
+			.request.type = _DRM_VBLANK_RELATIVE | _DRM_VBLANK_EVENT,
+			.request.sequence = 1,
+			.request.signal = 0
+		};
+		drmWaitVBlank(drmfd, &req);
+	}
 }
 
 void
@@ -835,7 +843,15 @@ main(int argc, char *argv[])
 
 	/* XXX create event for the signal handler for VT switching? */
 
+	event_add(masterev, NULL);
+	event_add(ttyev, NULL);
+	event_add(drmev, NULL);
+
 	event_base_loop(evbase, 0);
+
+	event_del(drmev);
+	event_del(ttyev);
+	event_del(masterev);
 
 	event_free(drmev);
 	event_free(ttyev);
