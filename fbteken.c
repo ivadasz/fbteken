@@ -59,8 +59,6 @@
 #include "fbdraw.h"
 #include <teken.h>
 
-#define JUMP_SCROLL
-
 struct bufent {
 	teken_char_t ch;
 	teken_attr_t attr;
@@ -137,20 +135,15 @@ uint32_t colormap[TC_NCOLORS * 2] = {
 struct bufent *termbuf;
 teken_pos_t cursorpos;
 int keypad, showcursor;
-#ifdef JUMP_SCROLL
-uint32_t *dirtybuf, dirtycount;
-#endif
+uint32_t *dirtybuf, dirtycount = 0;
 teken_attr_t defattr = {
 	ta_format : 0,
 	ta_fgcolor : TC_WHITE,
 	ta_bgcolor : TC_BLACK,
 };
 
-#ifdef JUMP_SCROLL
 pthread_mutex_t bufmtx = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
-#ifdef JUMP_SCROLL
 void
 dirty_cell(uint16_t col, uint16_t row)
 {
@@ -160,7 +153,6 @@ dirty_cell(uint16_t col, uint16_t row)
 		dirtycount++;
 	}
 }
-#endif
 
 void
 render_cell(uint16_t col, uint16_t row)
@@ -233,11 +225,7 @@ set_cell(uint16_t col, uint16_t row, teken_char_t ch, const teken_attr_t *attr)
 	}
 	termbuf[row * winsz.ws_col + col].ch = ch;
 	termbuf[row * winsz.ws_col + col].attr = *attr;
-#ifndef JUMP_SCROLL
-	render_cell(col, row);
-#else
 	dirty_cell(col, row);
-#endif
 }
 
 void
@@ -469,33 +457,22 @@ rdmaster(void)
 
 	val = read(amaster, s, 0x1000);
 	if (val > 0) {
-#ifdef JUMP_SCROLL
 		pthread_mutex_lock(&bufmtx);
-		dirtycount = 0;
-#endif
 		oc = cursorpos;
 		teken_input(&tek, s, val);
 		if (oc.tp_col != cursorpos.tp_col ||
 		    oc.tp_row != cursorpos.tp_row) {
 			termbuf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
 			termbuf[cursorpos.tp_row * winsz.ws_col + cursorpos.tp_col].cursor = 1;
-#ifndef JUMP_SCROLL
-			render_cell(oc.tp_col, oc.tp_row);
-			render_cell(cursorpos.tp_col, cursorpos.tp_row);
-#else
 			dirty_cell(oc.tp_col, oc.tp_row);
 			dirty_cell(cursorpos.tp_col, cursorpos.tp_row);
-#endif
 		}
-#ifdef JUMP_SCROLL
 		pthread_mutex_unlock(&bufmtx);
-#endif
 	}
 
 	return val;
 }
 
-#ifdef JUMP_SCROLL
 /* Render thread */
 void *
 render_thread(void *arg)
@@ -510,6 +487,8 @@ render_thread(void *arg)
 	 */
 	for (;;) {
 		nanosleep(&ts, NULL);
+		if (dirtycount == 0)
+			continue;
 		pthread_mutex_lock(&bufmtx);
 		for (i = 0; i < dirtycount; i++) {
 			idx = dirtybuf[i];
@@ -518,10 +497,10 @@ render_thread(void *arg)
 				render_cell(idx % winsz.ws_col, idx / winsz.ws_col);
 			}
 		}
+		dirtycount = 0;
 		pthread_mutex_unlock(&bufmtx);
 	}
 }
-#endif
 
 /* Reading keyboard input */
 void *
@@ -900,9 +879,7 @@ main(int argc, char *argv[])
         winsz.ws_ypixel = winsz.ws_row * fnheight;
 	ioctl (amaster, TIOCSWINSZ, &winsz);
 	termbuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
-#ifdef JUMP_SCROLL
 	dirtybuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(uint32_t));
-#endif
 	keypad = 0;
 	showcursor = 1;
 
