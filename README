@@ -1,4 +1,5 @@
-Depends on libdrm, libteken (from the FreeBSD base system) and libfreetype.
+Depends on libdrm, libevent2, libteken (from the FreeBSD base system) and
+libfreetype2.
 
 On DragonFly BSD, libteken currently needs to be copied from the FreeBSD
 source tree and manually built.
@@ -9,9 +10,7 @@ builds and works with minor adjustments on FreeBSD.
 
 TODO
 
-Use libevent2 instead of separate threads.
-
-Do vsync by reading from the drm device, instead of redrawing based on a timer.
+Needs more error handling.
 
 Improve performance of the terminal emulation. Especially the fbteken_copy
 operation needs optimizing, e.g. by optimizing the layout of the terminal-cell

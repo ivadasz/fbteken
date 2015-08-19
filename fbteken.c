@@ -56,6 +56,8 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include <event2/event.h>
+
 #include "fbdraw.h"
 #include <teken.h>
 
@@ -93,7 +95,6 @@ bool active = true;
 
 struct rop_obj *rop;
 int fnwidth, fnheight;
-pthread_t kbdthr, mousethr, renderthr, ttythr;
 struct termios origtios;
 
 struct winsize winsz = {
@@ -142,7 +143,7 @@ teken_attr_t defattr = {
 	ta_bgcolor : TC_BLACK,
 };
 
-pthread_mutex_t bufmtx = PTHREAD_MUTEX_INITIALIZER;
+struct event_base *evbase;
 
 void
 dirty_cell(uint16_t col, uint16_t row)
@@ -448,8 +449,8 @@ vtdeconf(void)
 	close(fd);
 }
 
-int
-rdmaster(void)
+void
+rdmaster(evutil_socket_t fd, short events, void *arg)
 {
 	int i, val;
 	char s[0x1000];
@@ -457,7 +458,6 @@ rdmaster(void)
 
 	val = read(amaster, s, 0x1000);
 	if (val > 0) {
-		pthread_mutex_lock(&bufmtx);
 		oc = cursorpos;
 		teken_input(&tek, s, val);
 		if (oc.tp_col != cursorpos.tp_col ||
@@ -467,233 +467,144 @@ rdmaster(void)
 			dirty_cell(oc.tp_col, oc.tp_row);
 			dirty_cell(cursorpos.tp_col, cursorpos.tp_row);
 		}
-		pthread_mutex_unlock(&bufmtx);
+	} else {
+		event_base_loopbreak(evbase);
 	}
-
-	return val;
-}
-
-/* Render thread */
-void *
-render_thread(void *arg)
-{
-	struct timespec ts = { 0, (1000 * 1000 * 1000) / 50 };
-	uint32_t idx;
-	int i;
-
-	/*
-	 * XXX Instead of a timer, do vsync via drm (i.e. by reading from the
-	 *     drm device file).
-	 */
-	for (;;) {
-		nanosleep(&ts, NULL);
-		if (dirtycount == 0)
-			continue;
-		pthread_mutex_lock(&bufmtx);
-		for (i = 0; i < dirtycount; i++) {
-			idx = dirtybuf[i];
-			if (termbuf[idx].dirty) {
-				termbuf[idx].dirty = 0;
-				render_cell(idx % winsz.ws_col, idx / winsz.ws_col);
-			}
-		}
-		dirtycount = 0;
-		pthread_mutex_unlock(&bufmtx);
-	}
-}
-
-/* Reading keyboard input */
-void *
-keyboard_thread(void *arg)
-{
-	char buf[16];
-	char *kbdpath = "/dev/kbd0";
-	struct pollfd fds;
-	int kbdfd, val;
-
-	kbdfd = open(kbdpath, O_RDWR | O_NONBLOCK);
-	if (kbdfd < 0) {
-		warn("%s", kbdpath);
-		pthread_exit(NULL);
-	}
-	fds.fd = kbdfd;
-	fds.events = POLLIN;
-	fds.revents = 0;
-
-	while (1) {
-		if (poll(&fds, 1, 5000) > 0) {
-			val = read(kbdfd, buf, 1);
-			if (val == 0) {
-				break;
-			} else if (val == -1) {
-				warn("%s", kbdpath);
-//				pthread_exit(NULL);
-			} else {
-				printf("val: %d\n", val);
-
-				/* XXX */
-			}
-		}
-	}
-
-	close(kbdfd);
-
-	return NULL;
-}
-
-/* Reading mouse input */
-void *
-mouse_thread(void *arg)
-{
-	char buf[16];
-	char *mousepath = "/dev/psm0";
-	struct pollfd fds;
-	int mousefd, val;
-
-	mousefd = open(mousepath, O_RDWR | O_NONBLOCK);
-	if (mousefd < 0) {
-		warn("%s", mousepath);
-		pthread_exit(NULL);
-	}
-	fds.fd = mousefd;
-	fds.events = POLLIN;
-	fds.revents = 0;
-
-	while (1) {
-		if (poll(&fds, 1, 5000) > 0) {
-			val = read(mousefd, buf, 3);
-			if (val == 0) {
-				break;
-			} else if (val == -1) {
-				warn("%s", mousepath);
-//				pthread_exit(NULL);
-			} else {
-				printf("val: %d\n", val);
-
-				/* XXX */
-			}
-		} else {
-//			printf("timeout\n");
-		}
-	}
-
-	close(mousefd);
-
-	return NULL;
 }
 
 /* Reading keyboard input from the tty which was set into raw mode */
-void *
-tty_thread(void *arg)
+void
+ttyread(evutil_socket_t fd, short events, void *arg)
 {
 	int val;
 	char buf[128];
 	const char *str;
 
-	while (1) {
-		val = read(ttyfd, buf, 128);
-		if (val == 0) {
-			break;
-		} else if ( val == -1) {
-			perror("read");
-			pthread_exit(NULL);
-//			exit(1);
-		}
-//		printf("val: %d\n", val);
+	val = read(ttyfd, buf, 128);
+	if (val == 0) {
+		return;
+	} else if (val == -1) {
+		perror("read");
+		event_base_loopbreak(evbase);
+	}
 #ifdef __linux__
-		/*
-		 * XXX This was my first attempt to correctly handle the
-		 *     escape codes in keyboard input (e.g. for keypad mode)
-		*/
-		if (val >= 2 && buf[0] == 0x1b && buf[1] == '[') {
+	/*
+	 * XXX This was my first attempt to correctly handle the
+	 *     escape codes in keyboard input (e.g. for keypad mode)
+	*/
+	if (val >= 2 && buf[0] == 0x1b && buf[1] == '[') {
 #if 0
-			printf("buf[0] = %x, buf[1] = %x, buf[2] = %x "
-			    "buf[3] = %x buf[4] = %x\n",
-			    buf[0], buf[1], buf[2], buf[3], buf[4]);
+		printf("buf[0] = %x, buf[1] = %x, buf[2] = %x "
+		    "buf[3] = %x buf[4] = %x\n",
+		    buf[0], buf[1], buf[2], buf[3], buf[4]);
 #endif
-			if (val == 3 && buf[2] == 'A') {
-				str = teken_get_sequence(&tek, TKEY_UP);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 3 && buf[2] == 'B') {
-				str = teken_get_sequence(&tek, TKEY_DOWN);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 3 && buf[2] == 'C') {
-				str = teken_get_sequence(&tek, TKEY_RIGHT);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 3 && buf[2] == 'D') {
-				str = teken_get_sequence(&tek, TKEY_LEFT);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 4 && buf[2] == '[' &&
-				   buf[3] == 'A') {
-				str = teken_get_sequence(&tek, TKEY_F1);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 4 && buf[2] == '[' &&
-				   buf[3] == 'B') {
-				str = teken_get_sequence(&tek, TKEY_F2);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 4 && buf[2] == '[' &&
-				   buf[3] == 'C') {
-				str = teken_get_sequence(&tek, TKEY_F3);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 4 && buf[2] == '[' &&
-				   buf[3] == 'D') {
-				str = teken_get_sequence(&tek, TKEY_F4);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 4 && buf[2] == '[' &&
-				   buf[3] == 'E') {
-				str = teken_get_sequence(&tek, TKEY_F5);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '1' &&
-				   buf[3] == '7' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F6);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '1' &&
-				   buf[3] == '8' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F7);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '1' &&
-				   buf[3] == '9' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F8);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '2' &&
-				   buf[3] == '0' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F9);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '2' &&
-				   buf[3] == '1' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F10);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '2' &&
-				   buf[3] == '3' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F11);
-				write(amaster, str, strlen(str));
-				continue;
-			} else if (val == 5 && buf[2] == '2' &&
-				   buf[3] == '4' && buf[4] == '~') {
-				str = teken_get_sequence(&tek, TKEY_F12);
-				write(amaster, str, strlen(str));
-				continue;
-			}
+		if (val == 3 && buf[2] == 'A') {
+			str = teken_get_sequence(&tek, TKEY_UP);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 3 && buf[2] == 'B') {
+			str = teken_get_sequence(&tek, TKEY_DOWN);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 3 && buf[2] == 'C') {
+			str = teken_get_sequence(&tek, TKEY_RIGHT);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 3 && buf[2] == 'D') {
+			str = teken_get_sequence(&tek, TKEY_LEFT);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 4 && buf[2] == '[' &&
+			   buf[3] == 'A') {
+			str = teken_get_sequence(&tek, TKEY_F1);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 4 && buf[2] == '[' &&
+			   buf[3] == 'B') {
+			str = teken_get_sequence(&tek, TKEY_F2);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 4 && buf[2] == '[' &&
+			   buf[3] == 'C') {
+			str = teken_get_sequence(&tek, TKEY_F3);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 4 && buf[2] == '[' &&
+			   buf[3] == 'D') {
+			str = teken_get_sequence(&tek, TKEY_F4);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 4 && buf[2] == '[' &&
+			   buf[3] == 'E') {
+			str = teken_get_sequence(&tek, TKEY_F5);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '1' &&
+			   buf[3] == '7' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F6);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '1' &&
+			   buf[3] == '8' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F7);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '1' &&
+			   buf[3] == '9' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F8);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '2' &&
+			   buf[3] == '0' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F9);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '2' &&
+			   buf[3] == '1' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F10);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '2' &&
+			   buf[3] == '3' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F11);
+			write(amaster, str, strlen(str));
+			return;
+		} else if (val == 5 && buf[2] == '2' &&
+			   buf[3] == '4' && buf[4] == '~') {
+			str = teken_get_sequence(&tek, TKEY_F12);
+			write(amaster, str, strlen(str));
+			return;
 		}
+	}
 #endif	/* defined(__linux__) */
-		write(amaster, buf, val);
+	write(amaster, buf, val);
+}
+
+void
+drmread(evutil_socket_t fd, short events, void *arg)
+{
+	int i, idx, val;
+	char buf[128];
+	const char *str;
+
+	val = read(drmfd, buf, 128);
+	if (val == 0) {
+		return;
+	} else if (val == -1) {
+		perror("read");
+		event_base_loopbreak(evbase);
 	}
 
-	return NULL;
+	if (dirtycount == 0)
+		return;
+	for (i = 0; i < dirtycount; i++) {
+		idx = dirtybuf[i];
+		if (termbuf[idx].dirty) {
+			termbuf[idx].dirty = 0;
+			render_cell(idx % winsz.ws_col, idx / winsz.ws_col);
+		}
+	}
+	dirtycount = 0;
 }
 
 int
@@ -893,14 +804,43 @@ main(int argc, char *argv[])
 		termbuf[i].dirty = 0;
 	}
 
-	pthread_create(&ttythr, NULL, tty_thread, NULL);
-	pthread_create(&kbdthr, NULL, keyboard_thread, NULL);
-	pthread_create(&mousethr, NULL, mouse_thread, NULL);
-	pthread_create(&renderthr, NULL, render_thread, NULL);
-	while (1) {
-		if (rdmaster() <= 0)
-			break;
-	}
+	struct event *masterev, *ttyev, *drmev;
+
+	evbase = event_base_new();
+
+	/*
+	 * This design tries to keep things interactive for the user.
+	 *
+	 * Lowest priority:  3 input from the master fd of the pty device
+	 *     ||            2 keyboard input from the terminal
+	 *     ||            2 output to the master fd of the pty device
+	 *     vv            1 vblank events from the drm device
+	 * Highest priority: 0 signal handlers
+	 */
+	event_base_priority_init(evbase, 4),
+
+	masterev = event_new(evbase, amaster,
+	    EV_READ | EV_PERSIST, rdmaster, NULL);
+	event_priority_set(masterev, 3);
+
+	ttyev = event_new(evbase, ttyfd,
+	    EV_READ | EV_PERSIST, ttyread, NULL);
+	event_priority_set(ttyev, 2);
+
+	/* XXX event handler for writes to the master fd of the pty device */
+
+	drmev = event_new(evbase, fd,
+	    EV_READ | EV_PERSIST, drmread, NULL);
+	event_priority_set(drmev, 1);
+
+	/* XXX create event for the signal handler for VT switching? */
+
+	event_base_loop(evbase, 0);
+
+	event_free(drmev);
+	event_free(ttyev);
+	event_free(masterev);
+	event_base_free(evbase);
 
 	vtdeconf();
 	drmModeSetCrtc(fd, crtc->crtc_id, oldbuffer_id, 0, 0, &conn->connector_id, 1, &crtc->mode);

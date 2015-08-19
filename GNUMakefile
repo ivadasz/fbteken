@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -O2 -march=native -pipe
 CFLAGS += -I/usr/include/libdrm -I/usr/include/libkms -I/usr/include/freetype2
 LDFLAGS = -s
-LDFLAGS += -lpthread -lutil -ldrm -lkms -lfreetype
+LDFLAGS += -lpthread -lutil -levent -ldrm -lkms -lfreetype
 
 # Set to path for the libteken include files
 LIBTEKEN_CFLAGS = -I/usr/local/include
