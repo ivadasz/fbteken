@@ -1,0 +1,11 @@
+Depends on libdrm, libteken (from the FreeBSD base system) and libfreetype.
+
+TODO
+
+Use libevent2 instead of separate threads.
+
+Do vsync by reading from the drm device, instead of redrawing based on a timer.
+
+Improve performance of the terminal emulation. Especially the fbteken_copy
+operation needs optimizing, e.g. by optimizing the layout of the terminal-cell
+buffer, or by optimizing away unneeded terminal operations..

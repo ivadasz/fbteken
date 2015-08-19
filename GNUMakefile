@@ -4,12 +4,14 @@ CFLAGS += -I/usr/include/libdrm -I/usr/include/libkms -I/usr/include/freetype2
 LDFLAGS = -s
 LDFLAGS += -lpthread -lutil -ldrm -lkms -lfreetype
 
-# Settings for finding the header files for libteken
-#CFLAGS += -I/var/tmp/teken
-CFLAGS += -I/home/vadaszi/teken
-# Settings for linking against libteken
-#LDFLAGS += -lteken -L/var/tmp/teken/libteken -Wl,-rpath=/var/tmp/teken/libteken
-LDFLAGS += -lteken -L/home/vadaszi/teken/libteken -Wl,-rpath=/home/vadaszi/teken/libteken
+# Set to path for the libteken include files
+LIBTEKEN_CFLAGS = -I/usr/local/include
+
+# Set path for the libteken library
+LIBTEKEN_LDFLAGS = -lteken -L/usr/local/lib -Wl,-rpath=/usr/local/lib
+
+CFLAGS += ${LIBTEKEN_CFLAGS}
+LDFLAGS += ${LIBTEKEN_LDFLAGS}
 
 OBJECTS = fbteken.o rop32.o
 
