@@ -153,14 +153,6 @@ dirty_cell(uint16_t col, uint16_t row)
 		dirtybuf[dirtycount] = row * winsz.ws_col + col;
 		dirtycount++;
 	}
-	if (dirtycount == 1) {
-		drmVBlank req = {
-			.request.type = _DRM_VBLANK_RELATIVE | _DRM_VBLANK_EVENT,
-			.request.sequence = 1,
-			.request.signal = 0
-		};
-		drmWaitVBlank(drmfd, &req);
-	}
 }
 
 void
@@ -463,9 +455,11 @@ rdmaster(evutil_socket_t fd, short events, void *arg)
 	int i, val;
 	char s[0x1000];
 	teken_pos_t oc;
+	uint32_t prevdirty;
 
 	val = read(amaster, s, 0x1000);
 	if (val > 0) {
+		prevdirty = dirtycount;
 		oc = cursorpos;
 		teken_input(&tek, s, val);
 		if (oc.tp_col != cursorpos.tp_col ||
@@ -474,6 +468,15 @@ rdmaster(evutil_socket_t fd, short events, void *arg)
 			termbuf[cursorpos.tp_row * winsz.ws_col + cursorpos.tp_col].cursor = 1;
 			dirty_cell(oc.tp_col, oc.tp_row);
 			dirty_cell(cursorpos.tp_col, cursorpos.tp_row);
+		}
+		if (dirtycount > 0 && prevdirty == 0) {
+			drmVBlank req = {
+				.request.type = _DRM_VBLANK_RELATIVE |
+						_DRM_VBLANK_EVENT,
+				.request.sequence = 1,
+				.request.signal = 0
+			};
+			drmWaitVBlank(drmfd, &req);
 		}
 	} else {
 		event_base_loopbreak(evbase);
