@@ -592,19 +592,10 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 }
 
 void
-drmread(evutil_socket_t fd, short events, void *arg)
+handle_vblank(int fd, unsigned int sequence, unsigned int tv_sec,
+    unsigned int tv_usec, void *user_data)
 {
-	int i, idx, val;
-	char buf[128];
-	const char *str;
-
-	val = read(drmfd, buf, 128);
-	if (val == 0) {
-		return;
-	} else if (val == -1) {
-		perror("read");
-		event_base_loopbreak(evbase);
-	}
+	int i, idx;
 
 	if (dirtycount == 0)
 		return;
@@ -616,6 +607,21 @@ drmread(evutil_socket_t fd, short events, void *arg)
 		}
 	}
 	dirtycount = 0;
+}
+
+void
+drmread(evutil_socket_t fd, short events, void *arg)
+{
+	drmEventContext evctx = {
+		.version = DRM_EVENT_CONTEXT_VERSION,
+		.vblank_handler = handle_vblank,
+		.page_flip_handler = NULL
+	};
+
+	if (drmHandleEvent(drmfd, &evctx) != 0) {
+		warnx("drmHandleEvent failed");
+		event_base_loopbreak(evbase);
+	}
 }
 
 int
