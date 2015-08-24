@@ -91,6 +91,9 @@ drmModeConnectorPtr drmconn;
 int drmfbid;
 int oldbuffer_id;
 int vtnum;
+#ifndef __linux__
+int initialvtnum;
+#endif
 bool active = true;
 
 struct rop_obj *rop;
@@ -343,7 +346,6 @@ fbteken_param(void *thunk, int param, unsigned int val)
 void
 vtleave(int signum)
 {
-	printf("leaving vt\n");
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	if (drmDropMaster(drmfd) != 0)
@@ -363,9 +365,8 @@ vtenter(int signum)
 {
 	int ret;
 
-	printf("activating vt\n");
 	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
-	ret = ioctl(ttyfd, VT_ACTIVATE, &vtnum);
+	ret = ioctl(ttyfd, VT_ACTIVATE, vtnum);
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
 	if (drmSetMaster(drmfd) != 0)
 		perror("drmSetMaster");
@@ -384,12 +385,52 @@ vtconfigure(void)
 	struct vt_stat s;
 #endif
 	struct termios tios;
+#ifndef __linux__
+	int initial, vtno;
+	char vtname[64];
+#endif
 
+#ifdef __linux__
 	fd = open("/dev/tty", O_RDWR);
 	if(fd < 0) {
-		printf("open /dev/tty failed\n");
+		errx(1, "open /dev/tty failed\n");
 	}
+#else
+	fd = open("/dev/ttyv0", O_RDWR);
+	if(fd < 0) {
+		errx(1, "open /dev/ttyv0 failed\n");
+	}
+	if (ioctl(fd, VT_GETACTIVE, &initial) != 0)
+		initial = -1;
+	initialvtnum = initial;
+	printf("initial vt is %d\n", initial);
+	if (ioctl(fd, VT_OPENQRY, &vtno) != 0) {
+		printf("no free tty\n");
+		exit(1);
+	}
+	printf("free vt is %d\n", vtno);
+	vtnum = vtno;
+	close(fd);
+
+	snprintf(vtname, sizeof(vtname), "/dev/ttyv%01x", vtno -1);
+
+	fd = open(vtname, O_RDWR);
+	if(fd < 0) {
+		warn("%s", vtname);
+		exit(1);
+	}
+#endif
 	ttyfd = fd;
+
+#ifndef __linux__
+	if (initial != vtnum) {
+		if (ioctl(ttyfd, VT_ACTIVATE, vtnum) != 0)
+			errx(1, "VT_ACTIVATE failed");
+		if (ioctl(ttyfd, VT_WAITACTIVE, vtnum) != 0)
+			errx(1, "VT_WAITACTIVE failed");
+	}
+#endif
+
 	ret = ioctl(fd, VT_GETMODE, &m);
 	if(ret != 0) {
 		printf("ioctl VT_GETMODE failed\n");
@@ -418,6 +459,10 @@ vtconfigure(void)
 #endif
 	signal(SIGUSR1, vtleave);
 	signal(SIGUSR2, vtenter);
+#ifndef __linux__
+	if (ioctl(fd, KDSETMODE, KD_GRAPHICS) != 0)
+		warnx("KDSETMODE failed");
+#endif
 	/* Putting the tty into raw mode */
 	tcgetattr(fd, &tios);
 	origtios = tios;
@@ -430,6 +475,9 @@ vtdeconf(void)
 {
 	int fd, ret;
 	struct vt_mode m;
+#ifndef __linux__
+	int n;
+#endif
 
 	fd = ttyfd;
 	ret = ioctl(fd, VT_GETMODE, &m);
@@ -445,6 +493,18 @@ vtdeconf(void)
 	signal(SIGUSR2, SIG_IGN);
 	/* Set tty settings to original values */
 	tcsetattr(fd, TCSAFLUSH, &origtios);
+
+#ifndef __linux__
+	if (ioctl(fd, KDSETMODE, KD_TEXT) != 0)
+		warnx("KDSETMODE failed");
+	if (ioctl(fd, VT_GETACTIVE, &n) == 0) {
+		if (n != initialvtnum) {
+			if (ioctl(fd, VT_ACTIVATE, initialvtnum) == 0) {
+				ioctl(fd, VT_WAITACTIVE, initialvtnum);
+			}
+		}
+	}
+#endif
 
 	close(fd);
 }
@@ -793,8 +853,8 @@ main(int argc, char *argv[])
 	drmfbid = fb_id;
 	printf("before setcrtc\n");
 
-	drmModeSetCrtc(fd, crtc->crtc_id, fb_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
 	vtconfigure();
+	drmModeSetCrtc(fd, crtc->crtc_id, fb_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
 
 	winsize.tp_col = width / fnwidth;
 	winsize.tp_row = height / fnheight;
@@ -867,8 +927,8 @@ main(int argc, char *argv[])
 	event_free(masterev);
 	event_base_free(evbase);
 
-	vtdeconf();
 	drmModeSetCrtc(fd, crtc->crtc_id, oldbuffer_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
+	vtdeconf();
 	drmModeRmFB(fd, fb_id);
 
 	kms_bo_unmap(bo);
