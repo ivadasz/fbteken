@@ -9,7 +9,6 @@ CFLAGS+=	-I${.OBJDIR}
 WARNS?=	6
 
 SRCS=	teken.c teken_state.h
-INCS=	teken.h
 CLEANFILES=	teken_state.h
 
 MAN=
