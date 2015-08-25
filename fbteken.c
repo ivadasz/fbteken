@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014  Imre Vadasz.  All Rights Reserved.
+ * Copyright (c) 2015  Imre Vadasz.  All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -118,11 +118,11 @@ teken_funcs_t tek_funcs = {
 };
 
 uint32_t colormap[TC_NCOLORS * 2] = {
-	[TC_BLACK] = 0x000000,
+	[TC_BLACK] = 0x00000000,
 	[TC_RED] = 0x00800000,
 	[TC_GREEN] = 0x00008000,
 	[TC_BROWN] = 0x00808000,
-	[TC_BLUE] = 0x00000080,
+	[TC_BLUE] = 0x000000c0,
 	[TC_MAGENTA] = 0x00800080,
 	[TC_CYAN] = 0x00008080,
 	[TC_WHITE] = 0x00c0c0c0,
@@ -344,6 +344,12 @@ fbteken_param(void *thunk, int param, unsigned int val)
 }
 
 void
+fbteken_respond(void *thunk, const void *arg, size_t sz)
+{
+	/* XXX */
+}
+
+void
 vtleave(int signum)
 {
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
@@ -355,18 +361,10 @@ vtleave(int signum)
 }
 
 void
-fbteken_respond(void *thunk, const void *arg, size_t sz)
-{
-	/* XXX */
-}
-
-void
 vtenter(int signum)
 {
-	int ret;
-
 	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
-	ret = ioctl(ttyfd, VT_ACTIVATE, vtnum);
+	ioctl(ttyfd, VT_ACTIVATE, vtnum);
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
 	if (drmSetMaster(drmfd) != 0)
 		perror("drmSetMaster");
@@ -657,8 +655,6 @@ handle_vblank(int fd, unsigned int sequence, unsigned int tv_sec,
 {
 	int i, idx;
 
-	if (dirtycount == 0)
-		return;
 	for (i = 0; i < dirtycount; i++) {
 		idx = dirtybuf[i];
 		if (termbuf[idx].dirty) {
@@ -851,7 +847,6 @@ main(int argc, char *argv[])
 	drmcrtc = crtc;
 	drmconn = conn;
 	drmfbid = fb_id;
-	printf("before setcrtc\n");
 
 	vtconfigure();
 	drmModeSetCrtc(fd, crtc->crtc_id, fb_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
