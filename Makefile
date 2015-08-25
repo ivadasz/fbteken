@@ -1,14 +1,3 @@
-PROG=	fbteken
-SRCS=	fbteken.c rop32.c
-HDRS=	fbdraw.h
-MAN=
+SUBDIR=	libteken src
 
-CFLAGS+=	-I/usr/local/include
-CFLAGS+=	-I/usr/local/include/libdrm
-CFLAGS+=	-I/usr/local/include/libkms
-CFLAGS+=	-I/usr/local/include/freetype2
-
-LDADD+=	-L/usr/local/lib
-LDADD+=	-lpthread -lutil -levent -lkms -ldrm -lfreetype -lteken
-
-.include <bsd.prog.mk>
+.include <bsd.subdir.mk>

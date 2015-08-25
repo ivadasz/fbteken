@@ -146,6 +146,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		printf("Failed to initialize font \"%s\"\n", fp);
 		return NULL;
 	}
+#if 0
 	printf("There are %d faces embedded into the font \"%s\"\n",
 	    self->face->num_faces, fp);
 	printf("There are %d fixed sizes embedded into the font \"%s\"\n",
@@ -154,6 +155,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 	for (i = 0; i < self->face->num_fixed_sizes; i++)
 		printf(" %d", self->face->available_sizes[i].height);
 	printf("\n");
+#endif
 
 	error = FTC_Manager_LookupFace(self->manager, &self->boldfid, &self->boldface);
 	if (error == FT_Err_Unknown_File_Format) {
@@ -163,6 +165,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		printf("Failed to initialize font \"%s\"\n", boldfp);
 		return NULL;
 	}
+#if 0
 	printf("There are %d faces embedded into the font \"%s\"\n",
 	    self->boldface->num_faces, boldfp);
 	printf("There are %d fixed sizes embedded into the font \"%s\"\n",
@@ -171,6 +174,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 	for (i = 0; i < self->boldface->num_fixed_sizes; i++)
 		printf(" %d", self->boldface->available_sizes[i].height);
 	printf("\n");
+#endif
 
 #if 0
 	printf("num of charmaps: %d\n", self->face->num_charmaps);
@@ -183,7 +187,9 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 	if (i == self->face->num_charmaps)
 #endif
 		self->cmap_idx = -1;
+#if 0
 	printf("cmap_idx: %d\n", self->cmap_idx);
+#endif
 
 	self->scaler.face_id = &self->fid;
 	self->scaler.pixel = 1;
@@ -197,7 +203,9 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 	}
 	self->fontwidth = (self->sz->metrics.max_advance >> 6) + 1;
 	self->fontheight = (self->sz->metrics.height >> 6) + 1;
+#if 0
 	printf("width: %d height: %d\n", self->fontwidth, self->fontheight);
+#endif
 
 	if (fn_width != NULL)
 		*fn_width = self->fontwidth;

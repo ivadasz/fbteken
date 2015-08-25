@@ -48,6 +48,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/consio.h>
+#include <sys/kbio.h>
 #endif
 
 #include <libkms.h>
@@ -136,6 +137,11 @@ uint32_t colormap[TC_NCOLORS * 2] = {
 	[TC_WHITE + TC_NCOLORS] = 0x00ffffff,
 };
 
+/* XXX use double-buffering on termbuf, to better avoid unneeded redrawing */
+/*
+ * XXX organize termbuf as a linear array of pointers to rows, to reduce the
+ *     cost of scrolling operations.
+ */
 struct bufent *termbuf;
 teken_pos_t cursorpos;
 int keypad, showcursor;
@@ -352,6 +358,7 @@ fbteken_respond(void *thunk, const void *arg, size_t sz)
 void
 vtleave(int signum)
 {
+	printf("vtleave\n");
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	if (drmDropMaster(drmfd) != 0)
@@ -363,6 +370,7 @@ vtleave(int signum)
 void
 vtenter(int signum)
 {
+	printf("vtenter\n");
 	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
 	ioctl(ttyfd, VT_ACTIVATE, vtnum);
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
@@ -466,6 +474,12 @@ vtconfigure(void)
 	origtios = tios;
 	cfmakeraw(&tios);
 	tcsetattr(fd, TCSAFLUSH, &tios);
+
+	/* Setting Keyboard mode */
+#ifndef __linux__
+	if (ioctl(fd, KDSKBMODE, K_CODE) != 0)
+		warnx("KDSKBMODE failed");
+#endif
 }
 
 void
@@ -502,6 +516,8 @@ vtdeconf(void)
 			}
 		}
 	}
+	if (ioctl(fd, KDSKBMODE, K_XLATE) != 0)
+		warnx("KDSKBMODE failed");
 #endif
 
 	close(fd);
@@ -541,21 +557,68 @@ rdmaster(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
+uint8_t keymap[256] = {
+	[0x1e] = 'a',
+	[0x30] = 'b',
+	[0x2e] = 'c',
+	[0x20] = 'd',
+	[0x12] = 'e',
+	[0x21] = 'f',
+	[0x22] = 'g',
+	[0x23] = 'h',
+	[0x17] = 'i',
+	[0x24] = 'j',
+	[0x25] = 'k',
+	[0x26] = 'l',
+	[0x32] = 'm',
+	[0x31] = 'n',
+	[0x18] = 'o',
+	[0x19] = 'p',
+	[0x10] = 'q',
+	[0x13] = 'r',
+	[0x1f] = 's',
+	[0x14] = 't',
+	[0x16] = 'u',
+	[0x2f] = 'v',
+	[0x11] = 'w',
+	[0x2d] = 'x',
+	[0x2c] = 'y',
+	[0x15] = 'z',
+	[0x1c] = '\r',
+};
+
 /* Reading keyboard input from the tty which was set into raw mode */
 void
 ttyread(evutil_socket_t fd, short events, void *arg)
 {
 	int val;
-	char buf[128];
+	uint8_t buf[128];
 	const char *str;
 
-	val = read(ttyfd, buf, 128);
+	val = read(ttyfd, buf, sizeof(buf));
 	if (val == 0) {
 		return;
 	} else if (val == -1) {
 		perror("read");
 		event_base_loopbreak(evbase);
 	}
+
+#ifndef __linux__
+	int i, n = 0;
+	uint8_t out[128];
+	for (i = 0; i < val; i++) {
+		if (!(buf[i] & 0x80)) {
+//			printf("read key: 0x%02x\n", buf[i]);
+			uint8_t v = keymap[buf[i]];
+			if (v != 0) {
+				out[n] = v;
+				n++;
+			}
+		}
+	}
+	write(amaster, out, n);
+#endif
+
 #ifdef __linux__
 	/*
 	 * XXX This was my first attempt to correctly handle the
@@ -645,8 +708,8 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 			return;
 		}
 	}
-#endif	/* defined(__linux__) */
 	write(amaster, buf, val);
+#endif	/* defined(__linux__) */
 }
 
 void
@@ -745,8 +808,10 @@ main(int argc, char *argv[])
 		perror("drmModeGetResources");
 		exit(1);
 	}
+#if 0
 	printf("resources: %x\n", res);
 	printf("count_fbs: %d, count_crtcs: %d, count_connectors: %d, min_width: %u, max_width: %u, min_height: %u, max_height: %u\n", res->count_fbs, res->count_crtcs, res->count_connectors, res->min_width, res->max_width, res->min_height, res->max_height);
+#endif
 
 	/* First take the first display output which is connected */
 	for (i = 0; i < res->count_connectors; ++i) {
@@ -756,6 +821,7 @@ main(int argc, char *argv[])
 	}
 	if (i == res->count_connectors)
 		errx(1, "No Monitor connected");
+#if 0
 	printf("conn->mmWidth: %u\n", conn->mmWidth);
 	printf("conn->mmHeight: %u\n", conn->mmHeight);
 	printf("conn->connector_id = %u\n", conn->connector_id);
@@ -767,6 +833,7 @@ main(int argc, char *argv[])
 	printf("conn->count_encoders = %u\n", conn->count_encoders);
 	for (i = 0; i < conn->count_encoders; i++)
 		printf("conn->encoders[%d] = %u\n", i, conn->encoders[i]);
+#endif
 
 	/* Using only the first encoder in conn->encoders for now */
 	if (conn->count_encoders == 0)
@@ -774,11 +841,13 @@ main(int argc, char *argv[])
 	else if (conn->count_encoders > 1)
 		printf("Using the first encoder in conn->encoders\n");
 	enc = drmModeGetEncoder(fd, conn->encoders[0]);
+#if 0
 	printf("enc->encoder_id = %u\n", enc->encoder_id);
 	printf("enc->encoder_type = %u\n", enc->encoder_type);
 	printf("enc->crtc_id = %u\n", enc->crtc_id);
 	printf("enc->possible_crtcs = %u\n", enc->possible_crtcs);
 	printf("enc->possible_clones = %u\n", enc->possible_clones);
+#endif
 
 	/*
 	 * Just use the index of the lowest bit set in enc->possible_crtcs
@@ -793,18 +862,21 @@ main(int argc, char *argv[])
 	}
 	if (i == res->count_crtcs)
 		errx(1, "No usable crtc found in enc->possible_crtcs\n");
+#if 0
 	printf("crtc->crtc_id = %u\n", crtc->crtc_id);
 	printf("crtc->buffer_id = %u\n", crtc->buffer_id);
 	printf("crtc->width/height = %ux%u\n", crtc->width, crtc->height);
 	printf("crtc->mode_valid = %u\n", crtc->mode_valid);
-	oldbuffer_id = crtc->buffer_id;
 	printf("x: %u, y: %u\n", crtc->x, crtc->y);
+#endif
+	oldbuffer_id = crtc->buffer_id;
 
 	/* Just use the first display mode given in conn->modes */
 	/* XXX Allow the user to override the mode via a commandline argument */
 	if (conn->count_modes == 0)
 		errx(1, "No display mode specified in conn->modes\n");
 	crtc->mode = conn->modes[0];
+#if 0
 	printf("Display mode:\n");
 	printf("clock: %u\n", crtc->mode.clock);
 	printf("vrefresh: %u\n", crtc->mode.vrefresh);
@@ -820,6 +892,7 @@ main(int argc, char *argv[])
 	printf("vscan: %u\n", crtc->mode.vscan);
 	printf("flags: %u\n", crtc->mode.flags);
 	printf("type: %u\n", crtc->mode.type);
+#endif
 
 	width = crtc->mode.hdisplay;
 	height = crtc->mode.vdisplay;
@@ -835,8 +908,10 @@ main(int argc, char *argv[])
 	kms_bo_create(kms, bo_attribs, &bo);
 	kms_bo_get_prop(bo, KMS_HANDLE, &handles[0]);
 	kms_bo_get_prop(bo, KMS_PITCH, &pitches[0]);
+#if 0
 	printf("pitches[0] = %u\n", pitches[0]);
 	printf("handles[0] = %u\n", handles[0]);
+#endif
 	offsets[0] = 0;
 	kms_bo_map(bo, &plane);
 	rop32_setclip(rop, (point){0,0}, (point){width-1,height-1});
