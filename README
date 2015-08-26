@@ -1,4 +1,4 @@
-Depends on libdrm, libevent2 and libfreetype2.
+Depends on libdrm, libevent2, libfreetype2 and libxkbcommon.
 Includes libteken (from the FreeBSD base system) for the actual terminal
 emulation.
 

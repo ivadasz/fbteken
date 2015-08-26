@@ -51,13 +51,15 @@
 #include <sys/kbio.h>
 #endif
 
-#include <libkms.h>
+#include <libkms/libkms.h>
 #include <drm_fourcc.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
 #include <event2/event.h>
+
+#include <xkbcommon/xkbcommon.h>
 
 #include "fbdraw.h"
 #include <teken.h>
@@ -81,6 +83,10 @@ void	fbteken_respond(void *thunk, const void *arg, size_t sz);
 
 int ttyfd;
 int drmfd;
+
+struct xkb_context *ctx;
+struct xkb_keymap *keymap;
+struct xkb_state *state;
 
 struct kms_driver *kms;
 struct kms_bo *bo;
@@ -557,36 +563,6 @@ rdmaster(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
-uint8_t keymap[256] = {
-	[0x1e] = 'a',
-	[0x30] = 'b',
-	[0x2e] = 'c',
-	[0x20] = 'd',
-	[0x12] = 'e',
-	[0x21] = 'f',
-	[0x22] = 'g',
-	[0x23] = 'h',
-	[0x17] = 'i',
-	[0x24] = 'j',
-	[0x25] = 'k',
-	[0x26] = 'l',
-	[0x32] = 'm',
-	[0x31] = 'n',
-	[0x18] = 'o',
-	[0x19] = 'p',
-	[0x10] = 'q',
-	[0x13] = 'r',
-	[0x1f] = 's',
-	[0x14] = 't',
-	[0x16] = 'u',
-	[0x2f] = 'v',
-	[0x11] = 'w',
-	[0x2d] = 'x',
-	[0x2c] = 'y',
-	[0x15] = 'z',
-	[0x1c] = '\r',
-};
-
 /* Reading keyboard input from the tty which was set into raw mode */
 void
 ttyread(evutil_socket_t fd, short events, void *arg)
@@ -604,19 +580,18 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 	}
 
 #ifndef __linux__
-	int i, n = 0;
-	uint8_t out[128];
+	int i, n = 0, sz;
+	uint8_t out[1024];
+	xkb_keycode_t keycode;
+	xkb_keysym_t keysym;
 	for (i = 0; i < val; i++) {
-		if (!(buf[i] & 0x80)) {
-//			printf("read key: 0x%02x\n", buf[i]);
-			uint8_t v = keymap[buf[i]];
-			if (v != 0) {
-				out[n] = v;
-				n++;
-			}
-		}
+		keycode = buf[i];
+		printf("keycode=0x%02x\n", buf[i]);
+		keysym = xkb_state_key_get_one_sym(state, keycode);
+		n += xkb_state_key_get_utf8(state, keycode, &out[n], sizeof(out) - n);
 	}
-	write(amaster, out, n);
+	if (n > 0)
+		write(amaster, out, n);
 #endif
 
 #ifdef __linux__
@@ -743,6 +718,31 @@ drmread(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
+struct xkb_rule_names names = {
+	.rules = "xorg",
+	.model = "pc102",
+	.layout = "de",
+	.variant = "",
+	.options = "ctrl:nocaps"
+};
+
+void
+xkb_init(void)
+{
+	ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	if (ctx == NULL)
+		errx(1, "xkb_context_new failed");
+
+	keymap = xkb_keymap_new_from_names(ctx, &names,
+	    XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (keymap == NULL)
+		errx(1, "xkb_keymap_new_from_names failed");
+
+	state = xkb_state_new(keymap);
+	if (state == NULL)
+		errx(1, "xkb_state_new failed");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -755,6 +755,8 @@ main(int argc, char *argv[])
 	drmModeFBPtr fb;
 	char *shell;
 	teken_pos_t winsize;
+
+	xkb_init();
 
 	/*
 	 * Font settings. alpha=true can only be used for truetype fonts

@@ -11,11 +11,10 @@ LIBTEKEN=${.CURDIR}/../libteken/libteken.a
 
 CFLAGS+=	-I/usr/local/include
 CFLAGS+=	-I/usr/local/include/libdrm
-CFLAGS+=	-I/usr/local/include/libkms
 CFLAGS+=	-I/usr/local/include/freetype2
 
 LDADD+=	${LIBTEKEN}
 LDADD+=	-L/usr/local/lib
-LDADD+=	-lpthread -lutil -levent -lkms -ldrm -lfreetype
+LDADD+=	-lpthread -lutil -levent -lkms -ldrm -lfreetype -lxkbcommon
 
 .include <bsd.prog.mk>
