@@ -1,11 +1,11 @@
-Depends on libdrm, libevent2, libteken (from the FreeBSD base system) and
-libfreetype2.
-
-On DragonFly BSD, libteken currently needs to be copied from the FreeBSD
-source tree and manually built.
+Depends on libdrm, libevent2 and libfreetype2.
+Includes libteken (from the FreeBSD base system) for the actual terminal
+emulation.
 
 Only tested on DragonFly BSD so far, but it's likely that everything
 builds and works with minor adjustments on FreeBSD.
+Small adjustments will be needed for Linux support, and some details of vt
+switching support are missing for Linux.
 
 
 TODO
