@@ -603,6 +603,59 @@ at_ispress(uint8_t atcode)
 		return 1;
 }
 
+/* Keep track of keys for vt switching */
+int
+handle_vtswitch(xkb_keysym_t sym)
+{
+	int n = 0;
+
+	switch (sym) {
+	case XKB_KEY_XF86Switch_VT_1:
+		n = 1;
+		break;
+	case XKB_KEY_XF86Switch_VT_2:
+		n = 2;
+		break;
+	case XKB_KEY_XF86Switch_VT_3:
+		n = 3;
+		break;
+	case XKB_KEY_XF86Switch_VT_4:
+		n = 4;
+		break;
+	case XKB_KEY_XF86Switch_VT_5:
+		n = 5;
+		break;
+	case XKB_KEY_XF86Switch_VT_6:
+		n = 6;
+		break;
+	case XKB_KEY_XF86Switch_VT_7:
+		n = 7;
+		break;
+	case XKB_KEY_XF86Switch_VT_8:
+		n = 8;
+		break;
+	case XKB_KEY_XF86Switch_VT_9:
+		n = 9;
+		break;
+	case XKB_KEY_XF86Switch_VT_10:
+		n = 10;
+		break;
+	case XKB_KEY_XF86Switch_VT_11:
+		n = 11;
+		break;
+	case XKB_KEY_XF86Switch_VT_12:
+		n = 12;
+		break;
+	}
+
+	if (n == 0)
+		return 0;
+
+	warnx("switching to vt %d", n);
+
+	return n;
+}
+
 /* Just track all keys for now, to avoid stuck modifiers */
 uint8_t pressed[256];
 int npressed = 0;
@@ -682,6 +735,18 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		char name[10];
 		xkb_keysym_get_name(keysym, name, 10);
 		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n", buf[i], keycode, name);
+		int vtnum = handle_vtswitch(keysym);
+		if (at_ispress(buf[i]) && vtnum > 0) {
+			evtimer_del(repeatev);
+			npressed = 0;
+			xkb_state_unref(state);
+			state = NULL;
+			state = xkb_state_new(keymap);
+			if (state == NULL)
+				errx(1, "xkb_state_new failed");
+			ioctl(ttyfd, VT_ACTIVATE, vtnum);
+			return;
+		}
 		if (at_ispress(buf[i]))
 			n += xkb_state_key_get_utf8(state, keycode, &out[n], sizeof(out) - n);
 		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f)))
