@@ -387,7 +387,6 @@ vtenter(int signum)
 	active = true;
 }
 
-/* XXX Create a new free vty like Xorg does */
 void
 vtconfigure(void)
 {
@@ -563,6 +562,85 @@ rdmaster(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
+struct event *repeatev;
+xkb_keycode_t repkeycode = 0;
+
+/* 200ms delay */
+struct timeval repdelay = { .tv_sec = 0, .tv_usec = 200000 };
+/* 50Hz repeat rate */
+struct timeval reprate = { .tv_sec = 0, .tv_usec = 20000 };
+
+/* Key repeat handling */
+void
+keyrepeat(evutil_socket_t fd, short events, void *arg)
+{
+	uint8_t out[16];
+	int n;
+
+	if (repkeycode != 0) {
+		n = xkb_state_key_get_utf8(state, repkeycode, out, sizeof(out));
+		evtimer_add(repeatev, &reprate);
+		if (n > 0)
+			write(amaster, out, n);
+	}
+}
+
+xkb_keycode_t
+at_toxkb(uint8_t atcode)
+{
+	if ((atcode & 0x7f) <= 0x58)
+		return (atcode & 0x7f) + 8;
+	else
+		return (atcode & 0x7f) + 15;
+}
+
+int
+at_ispress(uint8_t atcode)
+{
+	if (atcode & 0x80)
+		return 0;
+	else
+		return 1;
+}
+
+/* Just track all keys for now, to avoid stuck modifiers */
+uint8_t pressed[256];
+int npressed = 0;
+
+int
+ispressed(uint8_t code)
+{
+	int i;
+
+	for (i = 0; i < npressed; i++)
+		if (pressed[i] == code)
+			return 1;
+
+	return 0;
+}
+
+void
+press(uint8_t code)
+{
+	if (!ispressed(code)) {
+		pressed[npressed] = code;
+		npressed++;
+	}
+}
+
+void
+release(uint8_t code)
+{
+	int i;
+
+	for (i = 0; i < npressed; i++) {
+		if (pressed[i] == code) {
+			npressed--;
+			memcpy(&pressed[i], &pressed[i+1], npressed-i);
+		}
+	}
+}
+
 /* Reading keyboard input from the tty which was set into raw mode */
 void
 ttyread(evutil_socket_t fd, short events, void *arg)
@@ -579,22 +657,49 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		event_base_loopbreak(evbase);
 	}
 
-#ifndef __linux__
 	int i, n = 0, sz;
 	uint8_t out[1024];
-	xkb_keycode_t keycode;
+	xkb_keycode_t keycode = 0;
 	xkb_keysym_t keysym;
+	static uint8_t lastcode = 0;
+	int newrep = 0;
+
 	for (i = 0; i < val; i++) {
-		keycode = buf[i];
-		printf("keycode=0x%02x\n", buf[i]);
+		keycode = at_toxkb(buf[i]);
+
+		if (keycode == repkeycode && !at_ispress(buf[i]))
+			repkeycode = 0;
+		if (xkb_keymap_key_repeats(keymap, keycode) &&
+		    keycode != repkeycode && at_ispress(buf[i])) {
+			repkeycode = keycode;
+			newrep = 1;
+		}
+
+		if (lastcode == buf[i] && at_ispress(buf[i]))
+			continue;
+
 		keysym = xkb_state_key_get_one_sym(state, keycode);
-		n += xkb_state_key_get_utf8(state, keycode, &out[n], sizeof(out) - n);
+		char name[10];
+		xkb_keysym_get_name(keysym, name, 10);
+		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n", buf[i], keycode, name);
+		if (at_ispress(buf[i]))
+			n += xkb_state_key_get_utf8(state, keycode, &out[n], sizeof(out) - n);
+		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f)))
+			xkb_state_update_key(state, keycode, at_ispress(buf[i]) ? XKB_KEY_DOWN : XKB_KEY_UP);
+		if (at_ispress(buf[i]))
+			press(buf[i] & 0x7f);
+		else
+			release(buf[i] & 0x7f);
+		lastcode = buf[i];
 	}
+	if (repkeycode == 0)
+		evtimer_del(repeatev);
+	else if (newrep)
+		evtimer_add(repeatev, &repdelay);
 	if (n > 0)
 		write(amaster, out, n);
-#endif
 
-#ifdef __linux__
+#if 0
 	/*
 	 * XXX This was my first attempt to correctly handle the
 	 *     escape codes in keyboard input (e.g. for keypad mode)
@@ -684,7 +789,7 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		}
 	}
 	write(amaster, buf, val);
-#endif	/* defined(__linux__) */
+#endif
 }
 
 void
@@ -719,8 +824,9 @@ drmread(evutil_socket_t fd, short events, void *arg)
 }
 
 struct xkb_rule_names names = {
-	.rules = "xorg",
-	.model = "pc102",
+	/* XXX Not yet sure what to use as rules value here */
+	.rules = "evdev",
+	.model = "pc104",
 	.layout = "de",
 	.variant = "",
 	.options = "ctrl:nocaps"
@@ -960,17 +1066,21 @@ main(int argc, char *argv[])
 	/*
 	 * This design tries to keep things interactive for the user.
 	 *
-	 * Lowest priority:  3 input from the master fd of the pty device
+	 * Lowest priority:  4 input from the master fd of the pty device
+	 *     ||            3 automatic key-repeat input from the terminal
 	 *     ||            2 keyboard input from the terminal
 	 *     ||            2 output to the master fd of the pty device
 	 *     vv            1 vblank events from the drm device
 	 * Highest priority: 0 signal handlers
 	 */
-	event_base_priority_init(evbase, 4),
+	event_base_priority_init(evbase, 5),
 
 	masterev = event_new(evbase, amaster,
 	    EV_READ | EV_PERSIST, rdmaster, NULL);
-	event_priority_set(masterev, 3);
+	event_priority_set(masterev, 4);
+
+	repeatev = evtimer_new(evbase, keyrepeat, NULL);
+	event_priority_set(repeatev, 3);
 
 	ttyev = event_new(evbase, ttyfd,
 	    EV_READ | EV_PERSIST, ttyread, NULL);
@@ -992,10 +1102,12 @@ main(int argc, char *argv[])
 
 	event_del(drmev);
 	event_del(ttyev);
+	event_del(repeatev);
 	event_del(masterev);
 
 	event_free(drmev);
 	event_free(ttyev);
+	event_free(repeatev);
 	event_free(masterev);
 	event_base_free(evbase);
 

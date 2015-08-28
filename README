@@ -7,6 +7,9 @@ builds and works with minor adjustments on FreeBSD.
 Small adjustments will be needed for Linux support, and some details of vt
 switching support are missing for Linux.
 
+GNUMakefile is currently broken, and the current state is completely untested
+on Linux.
+
 
 TODO
 
