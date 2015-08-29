@@ -588,10 +588,45 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 static xkb_keycode_t
 at_toxkb(uint8_t atcode)
 {
-	if ((atcode & 0x7f) <= 0x58)
-		return (atcode & 0x7f) + 8;
+	xkb_keycode_t xkc;
+
+	if ((atcode & 0x7f) <= 0x50) {
+		xkc = (atcode & 0x7f);
+	} else {
+		/*
+		 * Translate keycodes as in sys/dev/misc/kbd/atkbd.c
+		 * from DragonFly to evdev key values.
+		 */
+		xkb_keycode_t code_to_key[128] = {
+			[0x54] = 99,	/* sysrq */
+			[0x59] = 96,	/* right enter key */
+			[0x5a] = 97,	/* right ctrl key */
+			[0x5b] = 98,	/* keypad divide key */
+			[0x5c] = 210,	/* print scrn key */
+			[0x5d] = 170,	/* right alt key (??) */
+			[0x5e] = 102,	/* grey home key */
+			[0x5f] = 103,	/* grey up arrow key */
+			[0x60] = 104,	/* grey page up key */
+			[0x61] = 105,	/* grey left arrow key */
+			[0x62] = 106,	/* grey right arrow key */
+			[0x63] = 107,	/* grey end key */
+			[0x64] = 108,	/* grey down arrow key */
+			[0x65] = 109,	/* grey page down key */
+			[0x66] = 110,	/* grey insert key */
+			[0x67] = 111,	/* grey delete key */
+			[0x68] = 119,	/* pause */
+			[0x69] = 125,	/* left Window key */
+			[0x6a] = 126,	/* right Window key */
+			[0x6b] = 139,	/* menu key */
+			[0x6c] = 0x19b,	/* break (??) */
+		};
+		xkc = code_to_key[atcode & 0x7f];
+	}
+
+	if (xkc > 0)
+		return xkc + 8;
 	else
-		return (atcode & 0x7f) + 15;
+		return 0;
 }
 
 static int
@@ -739,6 +774,8 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 
 	for (i = 0; i < val; i++) {
 		keycode = at_toxkb(buf[i]);
+		if (keycode == 0)
+			continue;
 
 		if (keycode == repkeycode && !at_ispress(buf[i]))
 			repkeycode = 0;
@@ -775,6 +812,7 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			if (cnt > 0) {
 				n+= cnt;
 			} else {
+				/* XXX handle composition (e.g. accents) */
 				n += xkb_state_key_get_utf8(state, keycode,
 				    &out[n], sizeof(out) - n);
 			}
@@ -834,7 +872,6 @@ drmread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 }
 
 struct xkb_rule_names names = {
-	/* XXX Not yet sure what to use as rules value here */
 	.rules = "evdev",
 	.model = "pc104",
 	.layout = "de",

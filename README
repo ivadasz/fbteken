@@ -18,3 +18,8 @@ Needs more error handling.
 Improve performance of the terminal emulation. Especially the fbteken_copy
 operation needs optimizing, e.g. by optimizing the layout of the terminal-cell
 buffer, or by optimizing away unneeded terminal operations..
+
+Keycode translation is currently tailored towards ISO and ANSI keyboard
+layouts. Special keys from e.g. japanese keyboards aren't handled yet.
+
+No support for keyboard LEDs yet.
