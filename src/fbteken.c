@@ -81,6 +81,8 @@ void	fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos)
 void	fbteken_param(void *thunk, int param, unsigned int val);
 void	fbteken_respond(void *thunk, const void *arg, size_t sz);
 
+static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len);
+
 int ttyfd;
 int drmfd;
 
@@ -563,6 +565,7 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 
 struct event *repeatev;
 xkb_keycode_t repkeycode = 0;
+xkb_keysym_t repkeysym = 0;
 
 /* 200ms delay */
 struct timeval repdelay = { .tv_sec = 0, .tv_usec = 200000 };
@@ -578,7 +581,12 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 	int n;
 
 	if (repkeycode != 0) {
-		n = xkb_state_key_get_utf8(state, repkeycode, out, sizeof(out));
+		n = handle_term_special_keysym(repkeysym, out, sizeof(out));
+		if (n <= 0) {
+			/* XXX handle composition (e.g. accents) */
+			n = xkb_state_key_get_utf8(state, repkeycode, out,
+			    sizeof(out));
+		}
 		evtimer_add(repeatev, &reprate);
 		if (n > 0)
 			write(amaster, out, n);
@@ -590,7 +598,7 @@ at_toxkb(uint8_t atcode)
 {
 	xkb_keycode_t xkc;
 
-	if ((atcode & 0x7f) <= 0x50) {
+	if ((atcode & 0x7f) <= 0x58) {
 		xkc = (atcode & 0x7f);
 	} else {
 		/*
@@ -603,7 +611,7 @@ at_toxkb(uint8_t atcode)
 			[0x5a] = 97,	/* right ctrl key */
 			[0x5b] = 98,	/* keypad divide key */
 			[0x5c] = 210,	/* print scrn key */
-			[0x5d] = 170,	/* right alt key (??) */
+			[0x5d] = 100,	/* right alt key */
 			[0x5e] = 102,	/* grey home key */
 			[0x5f] = 103,	/* grey up arrow key */
 			[0x60] = 104,	/* grey page up key */
@@ -622,6 +630,9 @@ at_toxkb(uint8_t atcode)
 		};
 		xkc = code_to_key[atcode & 0x7f];
 	}
+	/* Fixes e.g. the '<' key which lies between 0x50 and 0x58 */
+	if (xkc == 0)
+		xkc = (atcode & 0x7f);
 
 	if (xkc > 0)
 		return xkc + 8;
@@ -774,21 +785,26 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 
 	for (i = 0; i < val; i++) {
 		keycode = at_toxkb(buf[i]);
-		if (keycode == 0)
+		if (keycode == 0) {
+			warnx("ignoring atscancode 0x%02x", buf[i]);
 			continue;
+		}
 
-		if (keycode == repkeycode && !at_ispress(buf[i]))
+		keysym = xkb_state_key_get_one_sym(state, keycode);
+		if (keycode == repkeycode && !at_ispress(buf[i])) {
 			repkeycode = 0;
+			repkeysym = 0;
+		}
 		if (xkb_keymap_key_repeats(keymap, keycode) &&
 		    keycode != repkeycode && at_ispress(buf[i])) {
 			repkeycode = keycode;
+			repkeysym = keysym;
 			newrep = 1;
 		}
 
 		if (lastcode == buf[i] && at_ispress(buf[i]))
 			continue;
 
-		keysym = xkb_state_key_get_one_sym(state, keycode);
 		char name[10];
 		xkb_keysym_get_name(keysym, name, 10);
 		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n",
@@ -796,6 +812,9 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		if (at_ispress(buf[i])) {
 			int switchvt = handle_vtswitch(keysym);
 			if (switchvt > 0) {
+				lastcode = 0;
+				repkeycode = 0;
+				repkeysym = 0;
 				evtimer_del(repeatev);
 				npressed = 0;
 				xkb_state_unref(state);
@@ -810,7 +829,7 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			cnt = handle_term_special_keysym(keysym, &out[n],
 			    sizeof(out) - n);
 			if (cnt > 0) {
-				n+= cnt;
+				n += cnt;
 			} else {
 				/* XXX handle composition (e.g. accents) */
 				n += xkb_state_key_get_utf8(state, keycode,
