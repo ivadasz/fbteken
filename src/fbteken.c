@@ -607,53 +607,30 @@ at_ispress(uint8_t atcode)
 static int
 handle_vtswitch(xkb_keysym_t sym)
 {
-	int n = 0;
+	xkb_keysym_t sym_to_num[] = {
+		XKB_KEY_XF86Switch_VT_1,
+		XKB_KEY_XF86Switch_VT_2,
+		XKB_KEY_XF86Switch_VT_3,
+		XKB_KEY_XF86Switch_VT_4,
+		XKB_KEY_XF86Switch_VT_5,
+		XKB_KEY_XF86Switch_VT_6,
+		XKB_KEY_XF86Switch_VT_7,
+		XKB_KEY_XF86Switch_VT_8,
+		XKB_KEY_XF86Switch_VT_9,
+		XKB_KEY_XF86Switch_VT_10,
+		XKB_KEY_XF86Switch_VT_11,
+		XKB_KEY_XF86Switch_VT_12
+	};
+	int i;
 
-	switch (sym) {
-	case XKB_KEY_XF86Switch_VT_1:
-		n = 1;
-		break;
-	case XKB_KEY_XF86Switch_VT_2:
-		n = 2;
-		break;
-	case XKB_KEY_XF86Switch_VT_3:
-		n = 3;
-		break;
-	case XKB_KEY_XF86Switch_VT_4:
-		n = 4;
-		break;
-	case XKB_KEY_XF86Switch_VT_5:
-		n = 5;
-		break;
-	case XKB_KEY_XF86Switch_VT_6:
-		n = 6;
-		break;
-	case XKB_KEY_XF86Switch_VT_7:
-		n = 7;
-		break;
-	case XKB_KEY_XF86Switch_VT_8:
-		n = 8;
-		break;
-	case XKB_KEY_XF86Switch_VT_9:
-		n = 9;
-		break;
-	case XKB_KEY_XF86Switch_VT_10:
-		n = 10;
-		break;
-	case XKB_KEY_XF86Switch_VT_11:
-		n = 11;
-		break;
-	case XKB_KEY_XF86Switch_VT_12:
-		n = 12;
-		break;
+	for (i = 0; i < NELEM(sym_to_num); i++) {
+		if (sym_to_num[i] == sym) {
+			warnx("switching to vt %d", i + 1);
+			return i + 1;
+		}
 	}
 
-	if (n == 0)
-		return 0;
-
-	warnx("switching to vt %d", n);
-
-	return n;
+	return 0;
 }
 
 static int
