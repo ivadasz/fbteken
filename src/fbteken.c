@@ -943,6 +943,7 @@ main(int argc, char *argv[])
 	drmModeFBPtr fb;
 	char *shell;
 	teken_pos_t winsize;
+	char *normalfont, *boldfont;
 
 	xkb_init();
 
@@ -950,10 +951,13 @@ main(int argc, char *argv[])
 	 * Font settings. alpha=true can only be used for truetype fonts
 	 * to enable antialiased font rendering.
 	 */
-//	char *normalfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
-//	char *boldfont = "/usr/local/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
-	char *normalfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
-	char *boldfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+#ifdef __linux__
+	normalfont = "/usr/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
+	boldfont = "/usr/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+#else
+	normalfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
+	boldfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+#endif
 	unsigned int fontheight = 16;
 	bool alpha = true;
 #if 0
@@ -1000,7 +1004,10 @@ main(int argc, char *argv[])
 	}
 #if 0
 	printf("resources: %x\n", res);
-	printf("count_fbs: %d, count_crtcs: %d, count_connectors: %d, min_width: %u, max_width: %u, min_height: %u, max_height: %u\n", res->count_fbs, res->count_crtcs, res->count_connectors, res->min_width, res->max_width, res->min_height, res->max_height);
+	printf("count_fbs: %d, count_crtcs: %d, count_connectors: %d, "
+	    "min_width: %u, max_width: %u, min_height: %u, max_height: %u\n",
+	    res->count_fbs, res->count_crtcs, res->count_connectors,
+	    res->min_width, res->max_width, res->min_height, res->max_height);
 #endif
 
 	/* First take the first display output which is connected */
