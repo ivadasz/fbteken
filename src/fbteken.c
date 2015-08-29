@@ -160,7 +160,7 @@ teken_attr_t defattr = {
 
 struct event_base *evbase;
 
-void
+static void
 dirty_cell(uint16_t col, uint16_t row)
 {
 	if (!termbuf[row * winsz.ws_col + col].dirty) {
@@ -170,11 +170,10 @@ dirty_cell(uint16_t col, uint16_t row)
 	}
 }
 
-void
+static void
 render_cell(uint16_t col, uint16_t row)
 {
 	struct bufent *cell;
-	teken_pos_t pos;
 	teken_attr_t *attr;
 	teken_char_t ch;
 	uint16_t sx, sy;
@@ -195,7 +194,7 @@ render_cell(uint16_t col, uint16_t row)
 		fg = attr->ta_fgcolor;
 		bg = attr->ta_bgcolor;
 	}
-	if (fg >= 0 && fg < TC_NCOLORS) {
+	if (fg < TC_NCOLORS) {
 		if (attr->ta_format & TF_BOLD)
 			fg = colormap[fg + TC_NCOLORS];
 		else
@@ -204,7 +203,7 @@ render_cell(uint16_t col, uint16_t row)
 		fg = colormap[TC_WHITE];
 		err(1, "color out of range: %d\n", attr->ta_fgcolor);
 	}
-	if (bg >= 0 && bg < TC_NCOLORS) {
+	if (bg < TC_NCOLORS) {
 		bg = colormap[bg];
 	} else {
 		bg = colormap[TC_BLACK];
@@ -225,7 +224,7 @@ render_cell(uint16_t col, uint16_t row)
 		rop32_char(rop, (point){sx, sy}, fg, bg, ch, flags);
 }
 
-void
+static void
 set_cell(uint16_t col, uint16_t row, teken_char_t ch, const teken_attr_t *attr)
 {
 	teken_char_t oldch;
@@ -245,30 +244,28 @@ set_cell(uint16_t col, uint16_t row, teken_char_t ch, const teken_attr_t *attr)
 }
 
 void
-fbteken_bell(void *thunk)
+fbteken_bell(void *thunk __unused)
 {
 	/* XXX */
 }
 
 void
-fbteken_cursor(void *thunk, const teken_pos_t *pos)
+fbteken_cursor(void *thunk __unused, const teken_pos_t *pos)
 {
-	uint16_t sx, sy;
-
 	if (cursorpos.tp_col == pos->tp_col && cursorpos.tp_row == pos->tp_row)
 		return;
 	cursorpos = *pos;
 }
 
 void
-fbteken_putchar(void *thunk, const teken_pos_t *pos, teken_char_t ch,
+fbteken_putchar(void *thunk __unused, const teken_pos_t *pos, teken_char_t ch,
     const teken_attr_t *attr)
 {
 	set_cell(pos->tp_col, pos->tp_row, ch, attr);
 }
 
 void
-fbteken_fill(void *thunk, const teken_rect_t *rect, teken_char_t ch,
+fbteken_fill(void *thunk __unused, const teken_rect_t *rect, teken_char_t ch,
     const teken_attr_t *attr)
 {
 	teken_unit_t a, b;
@@ -281,7 +278,8 @@ fbteken_fill(void *thunk, const teken_rect_t *rect, teken_char_t ch,
 }
 
 void
-fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos)
+fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
+    const teken_pos_t *pos)
 {
 	int a, b;
 	teken_unit_t w, h;
@@ -331,7 +329,7 @@ fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos)
 }
 
 void
-fbteken_param(void *thunk, int param, unsigned int val)
+fbteken_param(void *thunk __unused, int param, unsigned int val)
 {
 //	fprintf(stderr, "fbteken_param param=%d val=%u\n", param, val);
 	switch (param) {
@@ -356,13 +354,14 @@ fbteken_param(void *thunk, int param, unsigned int val)
 }
 
 void
-fbteken_respond(void *thunk, const void *arg, size_t sz)
+fbteken_respond(void *thunk __unused, const void *arg __unused,
+    size_t sz __unused)
 {
 	/* XXX */
 }
 
-void
-vtleave(int signum)
+static void
+vtleave(int signum __unused)
 {
 	printf("vtleave\n");
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
@@ -373,8 +372,8 @@ vtleave(int signum)
 	active = false;
 }
 
-void
-vtenter(int signum)
+static void
+vtenter(int signum __unused)
 {
 	printf("vtenter\n");
 	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
@@ -387,7 +386,7 @@ vtenter(int signum)
 	active = true;
 }
 
-void
+static void
 vtconfigure(void)
 {
 	int fd, ret;
@@ -487,7 +486,7 @@ vtconfigure(void)
 #endif
 }
 
-void
+static void
 vtdeconf(void)
 {
 	int fd, ret;
@@ -528,10 +527,10 @@ vtdeconf(void)
 	close(fd);
 }
 
-void
-rdmaster(evutil_socket_t fd, short events, void *arg)
+static void
+rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
-	int i, val;
+	int val;
 	char s[0x1000];
 	teken_pos_t oc;
 	uint32_t prevdirty;
@@ -571,8 +570,9 @@ struct timeval repdelay = { .tv_sec = 0, .tv_usec = 200000 };
 struct timeval reprate = { .tv_sec = 0, .tv_usec = 20000 };
 
 /* Key repeat handling */
-void
-keyrepeat(evutil_socket_t fd, short events, void *arg)
+static void
+keyrepeat(evutil_socket_t fd __unused, short events __unused,
+    void *arg __unused)
 {
 	uint8_t out[16];
 	int n;
@@ -585,7 +585,7 @@ keyrepeat(evutil_socket_t fd, short events, void *arg)
 	}
 }
 
-xkb_keycode_t
+static xkb_keycode_t
 at_toxkb(uint8_t atcode)
 {
 	if ((atcode & 0x7f) <= 0x58)
@@ -594,7 +594,7 @@ at_toxkb(uint8_t atcode)
 		return (atcode & 0x7f) + 15;
 }
 
-int
+static int
 at_ispress(uint8_t atcode)
 {
 	if (atcode & 0x80)
@@ -604,7 +604,7 @@ at_ispress(uint8_t atcode)
 }
 
 /* Keep track of keys for vt switching */
-int
+static int
 handle_vtswitch(xkb_keysym_t sym)
 {
 	int n = 0;
@@ -656,7 +656,7 @@ handle_vtswitch(xkb_keysym_t sym)
 	return n;
 }
 
-int
+static int
 handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 {
 	const char *str = NULL;
@@ -740,7 +740,7 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 uint8_t pressed[256];
 int npressed = 0;
 
-int
+static int
 ispressed(uint8_t code)
 {
 	int i;
@@ -752,7 +752,7 @@ ispressed(uint8_t code)
 	return 0;
 }
 
-void
+static void
 press(uint8_t code)
 {
 	if (!ispressed(code)) {
@@ -761,7 +761,7 @@ press(uint8_t code)
 	}
 }
 
-void
+static void
 release(uint8_t code)
 {
 	int i;
@@ -775,8 +775,8 @@ release(uint8_t code)
 }
 
 /* Reading keyboard input from the tty which was set into raw mode */
-void
-ttyread(evutil_socket_t fd, short events, void *arg)
+static void
+ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
 	int val;
 	uint8_t buf[128];
@@ -789,7 +789,7 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		event_base_loopbreak(evbase);
 	}
 
-	int i, n = 0, sz;
+	int i, n = 0;
 	uint8_t out[1024];
 	xkb_keycode_t keycode = 0;
 	xkb_keysym_t keysym;
@@ -816,8 +816,8 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n",
 		    buf[i], keycode, name);
 		if (at_ispress(buf[i])) {
-			int vtnum = handle_vtswitch(keysym);
-			if (vtnum > 0) {
+			int switchvt = handle_vtswitch(keysym);
+			if (switchvt > 0) {
 				evtimer_del(repeatev);
 				npressed = 0;
 				xkb_state_unref(state);
@@ -825,7 +825,7 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 				state = xkb_state_new(keymap);
 				if (state == NULL)
 					errx(1, "xkb_state_new failed");
-				ioctl(ttyfd, VT_ACTIVATE, vtnum);
+				ioctl(ttyfd, VT_ACTIVATE, switchvt);
 				return;
 			}
 			int cnt;
@@ -859,11 +859,13 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		write(amaster, out, n);
 }
 
-void
-handle_vblank(int fd, unsigned int sequence, unsigned int tv_sec,
-    unsigned int tv_usec, void *user_data)
+static void
+handle_vblank(int fd __unused, unsigned int sequence __unused,
+    unsigned int tv_sec __unused, unsigned int tv_usec __unused,
+    void *user_data __unused)
 {
-	int i, idx;
+	int idx;
+	unsigned int i;
 
 	for (i = 0; i < dirtycount; i++) {
 		idx = dirtybuf[i];
@@ -875,8 +877,8 @@ handle_vblank(int fd, unsigned int sequence, unsigned int tv_sec,
 	dirtycount = 0;
 }
 
-void
-drmread(evutil_socket_t fd, short events, void *arg)
+static void
+drmread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
 	drmEventContext evctx = {
 		.version = DRM_EVENT_CONTEXT_VERSION,
@@ -899,7 +901,7 @@ struct xkb_rule_names names = {
 	.options = "ctrl:nocaps"
 };
 
-void
+static void
 xkb_init(void)
 {
 	ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
@@ -916,7 +918,7 @@ xkb_init(void)
 		errx(1, "xkb_state_new failed");
 }
 
-void
+static void
 xkb_finish(void)
 {
 	if (state != NULL) {
@@ -936,16 +938,19 @@ xkb_finish(void)
 int
 main(int argc, char *argv[])
 {
-	int i, ret, fd, fbid;
+	int i, fd;
 	uint32_t width, height;
 	drmModeResPtr res;
-	drmModeCrtcPtr crtc, vgacrtc;
-	drmModeConnectorPtr conn, vgaconn;
-	drmModeEncoderPtr enc, vgaenc;
-	drmModeFBPtr fb;
+	drmModeCrtcPtr crtc;
+	drmModeConnectorPtr conn;
+	drmModeEncoderPtr enc;
 	char *shell;
 	teken_pos_t winsize;
 	char *normalfont, *boldfont;
+
+	/* XXX Handle command line parameters with getopt(3) */
+	(void)argc;
+	(void)argv;
 
 	xkb_init();
 
@@ -954,12 +959,18 @@ main(int argc, char *argv[])
 	 * to enable antialiased font rendering.
 	 */
 #ifdef __linux__
-	normalfont = "/usr/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
-	boldfont = "/usr/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+	char default_normalfont[] =
+	    "/usr/lib/X11/fonts/dejavu/DejaVuSansMono.ttf";
+	char default_boldfont[] =
+	    "/usr/lib/X11/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 #else
-	normalfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
-	boldfont = "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
+	char default_normalfont[] =
+	    "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
+	char default_boldfont[] =
+	    "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 #endif
+	normalfont = default_normalfont;
+	boldfont = default_boldfont;
 	unsigned int fontheight = 16;
 	bool alpha = true;
 #if 0
@@ -970,14 +981,17 @@ main(int argc, char *argv[])
 	bool alpha = false;
 #endif
 
+	char termenv[] = "TERM=xterm";
+	char defaultshell[] = "/bin/sh";
+
 	child = forkpty(&amaster, NULL, NULL, &winsz);
 	if (child == -1) {
 		err(EXIT_FAILURE, "forkpty");
 	} else if (child == 0) {
 		shell = getenv("SHELL");
 		if (shell == NULL)
-			shell = "/bin/sh";
-		putenv("TERM=xterm");
+			shell = defaultshell;
+		putenv(termenv);
 		if (execlp(shell, basename(shell), NULL) == -1)
 			err(EXIT_FAILURE, "execlp");
 	}
@@ -1018,7 +1032,7 @@ main(int argc, char *argv[])
 		if(conn->connection == DRM_MODE_CONNECTED)
 			break;
 	}
-	if (i == res->count_connectors)
+	if (res->count_connectors <= 0)
 		errx(1, "No Monitor connected");
 #if 0
 	printf("conn->mmWidth: %u\n", conn->mmWidth);
@@ -1141,8 +1155,9 @@ main(int argc, char *argv[])
 	showcursor = 1;
 
 	/* Resetting character cells to a default value */
-	for (i = 0; i < width * height; i++)
-		((uint32_t *)plane)[i] = colormap[defattr.ta_bgcolor];
+	uint32_t k;
+	for (k = 0; k < width * height; k++)
+		((uint32_t *)plane)[k] = colormap[defattr.ta_bgcolor];
 	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
 		termbuf[i].attr = defattr;
 		termbuf[i].ch = ' ';

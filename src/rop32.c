@@ -82,7 +82,7 @@ static void rop32_blit1(struct rop_obj *, point, uint8_t *, int, int,
 
 static FT_Error
 my_face_requester(FTC_FaceID face_id, FT_Library library,
-    FT_Pointer request_data, FT_Face *aface)
+    FT_Pointer request_data __unused, FT_Face *aface)
 {
 	MyFace face = (MyFace)face_id;
 	return FT_New_Face(library, face->file_path, face->face_index, aface);
@@ -93,6 +93,9 @@ struct rop_obj *
 rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool alpha)
 {
 	struct rop_obj *self;
+	char default_fp[] = "/usr/X11R7/lib/X11/fonts/TTF/VeraMono.ttf";
+	char default_boldfp[] =
+	    "/usr/X11R7/lib/X11/fonts/TTF/VeraMono-Bold.ttf";
 
 	self = calloc(1, sizeof(struct rop_obj));
 	if (self == NULL) {
@@ -100,14 +103,14 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		return NULL;
 	}
 
-	int i, error;
+	int error;
 
 	self->doalpha = alpha;
 
 	if (fp == NULL)
-		fp = "/usr/X11R7/lib/X11/fonts/TTF/VeraMono.ttf";
+		fp = default_fp;
 	if (boldfp == NULL)
-		boldfp = "/usr/X11R7/lib/X11/fonts/TTF/VeraMono-Bold.ttf";
+		boldfp = default_boldfp;
 	self->fid.file_path = fp;
 	self->fid.face_index = 0;
 	self->boldfid.file_path = boldfp;
@@ -280,7 +283,7 @@ rop32_blit8_aa(struct rop_obj *self, point pos, uint8_t *src, int w, int h,
     int pitch, color fg, color bg)
 {
 	uint32_t *p = &((uint32_t *)self->fb)[pos.y * self->width + pos.x];
-	int i, j, a, b, c, d;
+	int a, b, c, d;
 
 	a = MAX(0, self->clip.a.x - pos.x);
 	b = MAX(0, self->clip.a.y - pos.y);
@@ -291,6 +294,10 @@ rop32_blit8_aa(struct rop_obj *self, point pos, uint8_t *src, int w, int h,
 	    c - a, d - b, pitch, fg, bg);
 }
 
+/*
+ * XXX It is often more efficient to write all pixels (because of
+ *     write-combining memory type)
+ */
 static void
 rop32_monoexpand(void *target, int towidth, uint8_t *src, int x, int y,
     int w, int h, int srcpitch, color col)
@@ -306,10 +313,10 @@ rop32_monoexpand(void *target, int towidth, uint8_t *src, int x, int y,
 
 static void
 rop32_blit1(struct rop_obj *self, point pos, uint8_t *src, int w, int h,
-    int pitch, color col, color bg)
+    int pitch, color col, color bg __unused)
 {
 	uint32_t *p = &((uint32_t *)self->fb)[pos.y * self->width + pos.x];
-	int i, j, a, b, c, d;
+	int a, b, c, d;
 
 	a = MAX(0, self->clip.a.x - pos.x);
 	b = MAX(0, self->clip.a.y - pos.y);
@@ -566,11 +573,8 @@ point
 rop32_text(struct rop_obj *self, point pos, color fg, color bg, char *str,
     int flags)
 {
-	int i, m, error;
-	int pen_x, pen_y;
+	int i, m;
 
-	pen_x = pos.x;
-	pen_y = pos.y;
 	m = strlen(str);
 	for (i = 0; i < m; i++)
 		pos = rop32_char(self, pos, fg, bg, str[i], flags);
