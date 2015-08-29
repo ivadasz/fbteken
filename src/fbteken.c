@@ -621,7 +621,7 @@ handle_vtswitch(xkb_keysym_t sym)
 		XKB_KEY_XF86Switch_VT_11,
 		XKB_KEY_XF86Switch_VT_12
 	};
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < NELEM(sym_to_num); i++) {
 		if (sym_to_num[i] == sym) {
@@ -636,79 +636,43 @@ handle_vtswitch(xkb_keysym_t sym)
 static int
 handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 {
+	struct {
+		xkb_keysym_t sym;
+		unsigned int t;
+	} sym_to_seq[] = {
+		{ XKB_KEY_Up, TKEY_UP },
+		{ XKB_KEY_Down, TKEY_DOWN },
+		{ XKB_KEY_Left, TKEY_LEFT },
+		{ XKB_KEY_Right, TKEY_RIGHT },
+		{ XKB_KEY_Home, TKEY_HOME },
+		{ XKB_KEY_End, TKEY_END },
+		{ XKB_KEY_Insert, TKEY_INSERT },
+		{ XKB_KEY_Delete, TKEY_DELETE },
+		{ XKB_KEY_Page_Up, TKEY_PAGE_UP },
+		{ XKB_KEY_Page_Down, TKEY_PAGE_DOWN },
+		{ XKB_KEY_F1, TKEY_F1 },
+		{ XKB_KEY_F2, TKEY_F2 },
+		{ XKB_KEY_F3, TKEY_F3 },
+		{ XKB_KEY_F4, TKEY_F4 },
+		{ XKB_KEY_F5, TKEY_F5 },
+		{ XKB_KEY_F6, TKEY_F6 },
+		{ XKB_KEY_F7, TKEY_F7 },
+		{ XKB_KEY_F8, TKEY_F8 },
+		{ XKB_KEY_F9, TKEY_F9 },
+		{ XKB_KEY_F10, TKEY_F10 },
+		{ XKB_KEY_F11, TKEY_F11 },
+		{ XKB_KEY_F12, TKEY_F12 }
+	};
 	const char *str = NULL;
+	unsigned int i;
 
-	switch (sym) {
-	case XKB_KEY_Up:
-		str = teken_get_sequence(&tek, TKEY_UP);
-		break;
-	case XKB_KEY_Down:
-		str = teken_get_sequence(&tek, TKEY_DOWN);
-		break;
-	case XKB_KEY_Left:
-		str = teken_get_sequence(&tek, TKEY_LEFT);
-		break;
-	case XKB_KEY_Right:
-		str = teken_get_sequence(&tek, TKEY_RIGHT);
-		break;
-	case XKB_KEY_Home:
-		str = teken_get_sequence(&tek, TKEY_HOME);
-		break;
-	case XKB_KEY_End:
-		str = teken_get_sequence(&tek, TKEY_END);
-		break;
-	case XKB_KEY_Insert:
-		str = teken_get_sequence(&tek, TKEY_INSERT);
-		break;
-	case XKB_KEY_Delete:
-		str = teken_get_sequence(&tek, TKEY_DELETE);
-		break;
-	case XKB_KEY_Page_Up:
-		str = teken_get_sequence(&tek, TKEY_PAGE_UP);
-		break;
-	case XKB_KEY_Page_Down:
-		str = teken_get_sequence(&tek, TKEY_PAGE_DOWN);
-		break;
-	case XKB_KEY_F1:
-		str = teken_get_sequence(&tek, TKEY_F1);
-		break;
-	case XKB_KEY_F2:
-		str = teken_get_sequence(&tek, TKEY_F2);
-		break;
-	case XKB_KEY_F3:
-		str = teken_get_sequence(&tek, TKEY_F3);
-		break;
-	case XKB_KEY_F4:
-		str = teken_get_sequence(&tek, TKEY_F4);
-		break;
-	case XKB_KEY_F5:
-		str = teken_get_sequence(&tek, TKEY_F5);
-		break;
-	case XKB_KEY_F6:
-		str = teken_get_sequence(&tek, TKEY_F6);
-		break;
-	case XKB_KEY_F7:
-		str = teken_get_sequence(&tek, TKEY_F7);
-		break;
-	case XKB_KEY_F8:
-		str = teken_get_sequence(&tek, TKEY_F8);
-		break;
-	case XKB_KEY_F9:
-		str = teken_get_sequence(&tek, TKEY_F9);
-		break;
-	case XKB_KEY_F10:
-		str = teken_get_sequence(&tek, TKEY_F10);
-		break;
-	case XKB_KEY_F11:
-		str = teken_get_sequence(&tek, TKEY_F11);
-		break;
-	case XKB_KEY_F12:
-		str = teken_get_sequence(&tek, TKEY_F12);
-		break;
+	for (i = 0; i < NELEM(sym_to_seq); i++) {
+		if (sym_to_seq[i].sym == sym) {
+			str = teken_get_sequence(&tek, sym_to_seq[i].t);
+			if (str != NULL)
+				return snprintf(buf, len, "%s", str);
+		}
 	}
-
-	if (str != NULL)
-		return snprintf(buf, len, "%s", str);
 
 	return 0;
 }
