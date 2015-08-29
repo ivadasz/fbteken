@@ -914,6 +914,23 @@ xkb_init(void)
 		errx(1, "xkb_state_new failed");
 }
 
+void
+xkb_finish(void)
+{
+	if (state != NULL) {
+		xkb_state_unref(state);
+		state = NULL;
+	}
+	if (keymap != NULL) {
+		xkb_keymap_unref(keymap);
+		keymap = NULL;
+	}
+	if (ctx != NULL) {
+		xkb_context_unref(ctx);
+		ctx = NULL;
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1188,4 +1205,6 @@ main(int argc, char *argv[])
 	drmModeFreeCrtc(crtc);
 	drmModeFreeResources(res);
 	drmClose(fd);
+
+	xkb_finish();
 }
