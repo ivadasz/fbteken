@@ -656,6 +656,86 @@ handle_vtswitch(xkb_keysym_t sym)
 	return n;
 }
 
+int
+handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
+{
+	const char *str = NULL;
+
+	switch (sym) {
+	case XKB_KEY_Up:
+		str = teken_get_sequence(&tek, TKEY_UP);
+		break;
+	case XKB_KEY_Down:
+		str = teken_get_sequence(&tek, TKEY_DOWN);
+		break;
+	case XKB_KEY_Left:
+		str = teken_get_sequence(&tek, TKEY_LEFT);
+		break;
+	case XKB_KEY_Right:
+		str = teken_get_sequence(&tek, TKEY_RIGHT);
+		break;
+	case XKB_KEY_Home:
+		str = teken_get_sequence(&tek, TKEY_HOME);
+		break;
+	case XKB_KEY_End:
+		str = teken_get_sequence(&tek, TKEY_END);
+		break;
+	case XKB_KEY_Insert:
+		str = teken_get_sequence(&tek, TKEY_INSERT);
+		break;
+	case XKB_KEY_Delete:
+		str = teken_get_sequence(&tek, TKEY_DELETE);
+		break;
+	case XKB_KEY_Page_Up:
+		str = teken_get_sequence(&tek, TKEY_PAGE_UP);
+		break;
+	case XKB_KEY_Page_Down:
+		str = teken_get_sequence(&tek, TKEY_PAGE_DOWN);
+		break;
+	case XKB_KEY_F1:
+		str = teken_get_sequence(&tek, TKEY_F1);
+		break;
+	case XKB_KEY_F2:
+		str = teken_get_sequence(&tek, TKEY_F2);
+		break;
+	case XKB_KEY_F3:
+		str = teken_get_sequence(&tek, TKEY_F3);
+		break;
+	case XKB_KEY_F4:
+		str = teken_get_sequence(&tek, TKEY_F4);
+		break;
+	case XKB_KEY_F5:
+		str = teken_get_sequence(&tek, TKEY_F5);
+		break;
+	case XKB_KEY_F6:
+		str = teken_get_sequence(&tek, TKEY_F6);
+		break;
+	case XKB_KEY_F7:
+		str = teken_get_sequence(&tek, TKEY_F7);
+		break;
+	case XKB_KEY_F8:
+		str = teken_get_sequence(&tek, TKEY_F8);
+		break;
+	case XKB_KEY_F9:
+		str = teken_get_sequence(&tek, TKEY_F9);
+		break;
+	case XKB_KEY_F10:
+		str = teken_get_sequence(&tek, TKEY_F10);
+		break;
+	case XKB_KEY_F11:
+		str = teken_get_sequence(&tek, TKEY_F11);
+		break;
+	case XKB_KEY_F12:
+		str = teken_get_sequence(&tek, TKEY_F12);
+		break;
+	}
+
+	if (str != NULL)
+		return snprintf(buf, len, "%s", str);
+
+	return 0;
+}
+
 /* Just track all keys for now, to avoid stuck modifiers */
 uint8_t pressed[256];
 int npressed = 0;
@@ -700,7 +780,6 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 {
 	int val;
 	uint8_t buf[128];
-	const char *str;
 
 	val = read(ttyfd, buf, sizeof(buf));
 	if (val == 0) {
@@ -734,127 +813,50 @@ ttyread(evutil_socket_t fd, short events, void *arg)
 		keysym = xkb_state_key_get_one_sym(state, keycode);
 		char name[10];
 		xkb_keysym_get_name(keysym, name, 10);
-		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n", buf[i], keycode, name);
-		int vtnum = handle_vtswitch(keysym);
-		if (at_ispress(buf[i]) && vtnum > 0) {
-			evtimer_del(repeatev);
-			npressed = 0;
-			xkb_state_unref(state);
-			state = NULL;
-			state = xkb_state_new(keymap);
-			if (state == NULL)
-				errx(1, "xkb_state_new failed");
-			ioctl(ttyfd, VT_ACTIVATE, vtnum);
-			return;
+		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n",
+		    buf[i], keycode, name);
+		if (at_ispress(buf[i])) {
+			int vtnum = handle_vtswitch(keysym);
+			if (vtnum > 0) {
+				evtimer_del(repeatev);
+				npressed = 0;
+				xkb_state_unref(state);
+				state = NULL;
+				state = xkb_state_new(keymap);
+				if (state == NULL)
+					errx(1, "xkb_state_new failed");
+				ioctl(ttyfd, VT_ACTIVATE, vtnum);
+				return;
+			}
+			int cnt;
+			cnt = handle_term_special_keysym(keysym, &out[n],
+			    sizeof(out) - n);
+			if (cnt > 0) {
+				n+= cnt;
+			} else {
+				n += xkb_state_key_get_utf8(state, keycode,
+				    &out[n], sizeof(out) - n);
+			}
 		}
-		if (at_ispress(buf[i]))
-			n += xkb_state_key_get_utf8(state, keycode, &out[n], sizeof(out) - n);
-		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f)))
-			xkb_state_update_key(state, keycode, at_ispress(buf[i]) ? XKB_KEY_DOWN : XKB_KEY_UP);
+		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f))) {
+			xkb_state_update_key(state, keycode,
+			    at_ispress(buf[i]) ? XKB_KEY_DOWN : XKB_KEY_UP);
+		}
 		if (at_ispress(buf[i]))
 			press(buf[i] & 0x7f);
 		else
 			release(buf[i] & 0x7f);
+
 		lastcode = buf[i];
 	}
+
 	if (repkeycode == 0)
 		evtimer_del(repeatev);
 	else if (newrep)
 		evtimer_add(repeatev, &repdelay);
+
 	if (n > 0)
 		write(amaster, out, n);
-
-#if 0
-	/*
-	 * XXX This was my first attempt to correctly handle the
-	 *     escape codes in keyboard input (e.g. for keypad mode)
-	*/
-	if (val >= 2 && buf[0] == 0x1b && buf[1] == '[') {
-#if 0
-		printf("buf[0] = %x, buf[1] = %x, buf[2] = %x "
-		    "buf[3] = %x buf[4] = %x\n",
-		    buf[0], buf[1], buf[2], buf[3], buf[4]);
-#endif
-		if (val == 3 && buf[2] == 'A') {
-			str = teken_get_sequence(&tek, TKEY_UP);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 3 && buf[2] == 'B') {
-			str = teken_get_sequence(&tek, TKEY_DOWN);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 3 && buf[2] == 'C') {
-			str = teken_get_sequence(&tek, TKEY_RIGHT);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 3 && buf[2] == 'D') {
-			str = teken_get_sequence(&tek, TKEY_LEFT);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 4 && buf[2] == '[' &&
-			   buf[3] == 'A') {
-			str = teken_get_sequence(&tek, TKEY_F1);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 4 && buf[2] == '[' &&
-			   buf[3] == 'B') {
-			str = teken_get_sequence(&tek, TKEY_F2);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 4 && buf[2] == '[' &&
-			   buf[3] == 'C') {
-			str = teken_get_sequence(&tek, TKEY_F3);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 4 && buf[2] == '[' &&
-			   buf[3] == 'D') {
-			str = teken_get_sequence(&tek, TKEY_F4);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 4 && buf[2] == '[' &&
-			   buf[3] == 'E') {
-			str = teken_get_sequence(&tek, TKEY_F5);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '1' &&
-			   buf[3] == '7' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F6);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '1' &&
-			   buf[3] == '8' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F7);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '1' &&
-			   buf[3] == '9' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F8);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '2' &&
-			   buf[3] == '0' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F9);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '2' &&
-			   buf[3] == '1' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F10);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '2' &&
-			   buf[3] == '3' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F11);
-			write(amaster, str, strlen(str));
-			return;
-		} else if (val == 5 && buf[2] == '2' &&
-			   buf[3] == '4' && buf[4] == '~') {
-			str = teken_get_sequence(&tek, TKEY_F12);
-			write(amaster, str, strlen(str));
-			return;
-		}
-	}
-	write(amaster, buf, val);
-#endif
 }
 
 void
