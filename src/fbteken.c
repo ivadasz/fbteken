@@ -679,6 +679,10 @@ handle_vtswitch(xkb_keysym_t sym)
 	return 0;
 }
 
+/*
+ * XXX Need to insert escape sequence explicitly here, when CTRL key is
+ *     pressed. For "normal" keys, that is already done by libxkbcommon.
+ */
 static int
 handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 {
@@ -831,6 +835,14 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			if (cnt > 0) {
 				n += cnt;
 			} else {
+				/*
+				 * XXX Alt should optionally be handled
+				 *     similarly to the Esc key.
+				 *
+				 * XXX In X the left Alt key is an additional
+				 *      modifier key, we should try to emulate
+				 *      that behaviour.
+				 */
 				/* XXX handle composition (e.g. accents) */
 				n += xkb_state_key_get_utf8(state, keycode,
 				    &out[n], sizeof(out) - n);
