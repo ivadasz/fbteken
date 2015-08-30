@@ -950,10 +950,19 @@ xkb_finish(void)
 	}
 }
 
+static void
+usage(void)
+{
+	fprintf(stderr,
+	    "usage: %s [-a | -A] [-f fontfile] [-F bold_fontfile] "
+	    "[-s fontsize] [-h]\n", getprogname());
+	exit(1);
+}
+
 int
 main(int argc, char *argv[])
 {
-	int i, fd;
+	int fd;
 	uint32_t width, height;
 	drmModeResPtr res;
 	drmModeCrtcPtr crtc;
@@ -961,11 +970,40 @@ main(int argc, char *argv[])
 	drmModeEncoderPtr enc;
 	char *shell;
 	teken_pos_t winsize;
-	char *normalfont, *boldfont;
+	char *normalfont = NULL, *boldfont = NULL;
+	int i, ch;
+
+	unsigned int fontheight = 16;
+	bool alpha = true;
+
+	const char *errstr;
 
 	/* XXX Handle command line parameters with getopt(3) */
-	(void)argc;
-	(void)argv;
+	while ((ch = getopt(argc, argv, "aAf:F:s:h")) != -1) {
+		switch (ch) {
+		case 'a':
+			alpha = true;
+			break;
+		case 'A':
+			alpha = false;
+			break;
+		case 'f':
+			normalfont = optarg;
+			break;
+		case 'F':
+			boldfont = optarg;
+			break;
+		case 's':
+			fontheight = strtonum(optarg, 1, 128, &errstr);
+			if (errstr) {
+				errx(1, "font height is %s: %s", errstr, optarg);
+			}
+			break;
+		case 'h':
+		default:
+			usage();
+		}
+	}
 
 	xkb_init();
 
@@ -984,10 +1022,10 @@ main(int argc, char *argv[])
 	char default_boldfont[] =
 	    "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 #endif
-	normalfont = default_normalfont;
-	boldfont = default_boldfont;
-	unsigned int fontheight = 16;
-	bool alpha = true;
+	if (normalfont == NULL)
+		normalfont = default_normalfont;
+	if (boldfont == NULL)
+		boldfont = default_boldfont;
 #if 0
 	/* e.g. a bitmap font */
 	char *normalfont = "/usr/local/lib/X11/fonts/misc/9x15.pcf.gz";
