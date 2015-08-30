@@ -979,7 +979,8 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s [-a | -A] [-d delay] [-r rate] [-f fontfile] "
-	    "[-F bold_fontfile] [-s fontsize] [-h]\n", getprogname());
+	    "[-F bold_fontfile] [-s fontsize] [-k kbd_layout] "
+	    "[-o kbd_options] [-h]\n", getprogname());
 	exit(1);
 }
 
