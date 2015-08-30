@@ -970,8 +970,8 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s [-a | -A] [-f fontfile] [-F bold_fontfile] "
-	    "[-s fontsize] [-h]\n", getprogname());
+	    "usage: %s [-a | -A] [-d delay] [-r rate] [-f fontfile] "
+	    "[-F bold_fontfile] [-s fontsize] [-h]\n", getprogname());
 	exit(1);
 }
 
@@ -995,7 +995,9 @@ main(int argc, char *argv[])
 
 	const char *errstr;
 
-	/* XXX Handle command line parameters with getopt(3) */
+	unsigned int repeat_delay = 200;
+	unsigned int repeat_rate = 30;
+
 	while ((ch = getopt(argc, argv, "aAf:F:k:o:v:s:h")) != -1) {
 		switch (ch) {
 		case 'a':
@@ -1003,6 +1005,13 @@ main(int argc, char *argv[])
 			break;
 		case 'A':
 			alpha = false;
+			break;
+		case 'd':
+			repeat_delay = strtonum(optarg, 100, 2000, &errstr);
+			if (errstr) {
+				errx(1, "key repeat delay is %s: %s", errstr,
+				    optarg);
+			}
 			break;
 		case 'f':
 			normalfont = optarg;
@@ -1016,20 +1025,34 @@ main(int argc, char *argv[])
 		case 'o':
 			kbd_options = optarg;
 			break;
-		case 'v':
-			kbd_variant = optarg;
+		case 'r':
+			repeat_rate = strtonum(optarg, 1, 50, &errstr);
+			if (errstr) {
+				errx(1, "key repeat rate is %s: %s", errstr,
+				    optarg);
+			}
 			break;
 		case 's':
 			fontheight = strtonum(optarg, 1, 128, &errstr);
 			if (errstr) {
-				errx(1, "font height is %s: %s", errstr, optarg);
+				errx(1, "font height is %s: %s", errstr,
+				    optarg);
 			}
+			break;
+		case 'v':
+			kbd_variant = optarg;
 			break;
 		case 'h':
 		default:
 			usage();
 		}
 	}
+
+	repdelay.tv_sec = repeat_delay / 1000;
+	repdelay.tv_usec = (repeat_delay % 1000) * 1000;
+
+	reprate.tv_sec = ((1000*1000) / repeat_rate) / (1000*1000);
+	reprate.tv_usec = ((1000*1000) / repeat_rate) % (1000*1000);
 
 	xkb_init(kbd_layout, kbd_options, kbd_variant);
 
