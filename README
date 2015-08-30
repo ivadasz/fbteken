@@ -13,6 +13,8 @@ on Linux.
 
 TODO
 
+Write a manpage.
+
 Needs more error handling.
 
 Improve performance of the terminal emulation. Especially the fbteken_copy

@@ -920,17 +920,24 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 struct xkb_rule_names names = {
 	.rules = "evdev",
 	.model = "pc104",
-	.layout = "de",
+	.layout = "us",
 	.variant = "",
-	.options = "ctrl:nocaps"
+	.options = ""
 };
 
 static void
-xkb_init(void)
+xkb_init(char *layout, char *options, char *variant)
 {
 	ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (ctx == NULL)
 		errx(1, "xkb_context_new failed");
+
+	if (layout != NULL)
+		names.layout = layout;
+	if (options != NULL)
+		names.options = options;
+	if (variant != NULL)
+		names.variant = variant;
 
 	keymap = xkb_keymap_new_from_names(ctx, &names,
 	    XKB_KEYMAP_COMPILE_NO_FLAGS);
@@ -984,11 +991,12 @@ main(int argc, char *argv[])
 
 	unsigned int fontheight = 16;
 	bool alpha = true;
+	char *kbd_layout = NULL, *kbd_options = NULL, *kbd_variant = NULL;
 
 	const char *errstr;
 
 	/* XXX Handle command line parameters with getopt(3) */
-	while ((ch = getopt(argc, argv, "aAf:F:s:h")) != -1) {
+	while ((ch = getopt(argc, argv, "aAf:F:k:o:v:s:h")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
@@ -1002,6 +1010,15 @@ main(int argc, char *argv[])
 		case 'F':
 			boldfont = optarg;
 			break;
+		case 'k':
+			kbd_layout = optarg;
+			break;
+		case 'o':
+			kbd_options = optarg;
+			break;
+		case 'v':
+			kbd_variant = optarg;
+			break;
 		case 's':
 			fontheight = strtonum(optarg, 1, 128, &errstr);
 			if (errstr) {
@@ -1014,7 +1031,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	xkb_init();
+	xkb_init(kbd_layout, kbd_options, kbd_variant);
 
 	/*
 	 * Font settings. alpha=true can only be used for truetype fonts
