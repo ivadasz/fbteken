@@ -661,8 +661,8 @@ handle_vtswitch(xkb_keysym_t sym)
 }
 
 /*
- * XXX Need to insert escape sequence explicitly here, when CTRL key is
- *     pressed. For "normal" keys, that is already done by libxkbcommon.
+ * XXX Need to insert escape sequence explicitly here, when ALT key is
+ *     pressed.
  */
 static int
 handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
