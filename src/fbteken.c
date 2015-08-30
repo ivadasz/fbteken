@@ -670,36 +670,44 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 	struct {
 		xkb_keysym_t sym;
 		unsigned int t;
+		unsigned int ctlt;
 	} sym_to_seq[] = {
-		{ XKB_KEY_Up, TKEY_UP },
-		{ XKB_KEY_Down, TKEY_DOWN },
-		{ XKB_KEY_Left, TKEY_LEFT },
-		{ XKB_KEY_Right, TKEY_RIGHT },
-		{ XKB_KEY_Home, TKEY_HOME },
-		{ XKB_KEY_End, TKEY_END },
-		{ XKB_KEY_Insert, TKEY_INSERT },
-		{ XKB_KEY_Delete, TKEY_DELETE },
-		{ XKB_KEY_Page_Up, TKEY_PAGE_UP },
-		{ XKB_KEY_Page_Down, TKEY_PAGE_DOWN },
-		{ XKB_KEY_F1, TKEY_F1 },
-		{ XKB_KEY_F2, TKEY_F2 },
-		{ XKB_KEY_F3, TKEY_F3 },
-		{ XKB_KEY_F4, TKEY_F4 },
-		{ XKB_KEY_F5, TKEY_F5 },
-		{ XKB_KEY_F6, TKEY_F6 },
-		{ XKB_KEY_F7, TKEY_F7 },
-		{ XKB_KEY_F8, TKEY_F8 },
-		{ XKB_KEY_F9, TKEY_F9 },
-		{ XKB_KEY_F10, TKEY_F10 },
-		{ XKB_KEY_F11, TKEY_F11 },
-		{ XKB_KEY_F12, TKEY_F12 }
+		{ XKB_KEY_Up, TKEY_UP, TKEY_CTL_UP },
+		{ XKB_KEY_Down, TKEY_DOWN, TKEY_CTL_DOWN },
+		{ XKB_KEY_Left, TKEY_LEFT, TKEY_CTL_LEFT },
+		{ XKB_KEY_Right, TKEY_RIGHT, TKEY_CTL_RIGHT },
+		{ XKB_KEY_Home, TKEY_HOME, TKEY_CTL_HOME },
+		{ XKB_KEY_End, TKEY_END, TKEY_CTL_END },
+		{ XKB_KEY_Insert, TKEY_INSERT, TKEY_CTL_INSERT },
+		{ XKB_KEY_Delete, TKEY_DELETE, TKEY_CTL_DELETE },
+		{ XKB_KEY_Page_Up, TKEY_PAGE_UP, TKEY_CTL_PAGE_UP },
+		{ XKB_KEY_Page_Down, TKEY_PAGE_DOWN, TKEY_CTL_PAGE_DOWN },
+		{ XKB_KEY_F1, TKEY_F1, TKEY_CTL_F1 },
+		{ XKB_KEY_F2, TKEY_F2, TKEY_CTL_F2 },
+		{ XKB_KEY_F3, TKEY_F3, TKEY_CTL_F3 },
+		{ XKB_KEY_F4, TKEY_F4, TKEY_CTL_F4 },
+		{ XKB_KEY_F5, TKEY_F5, TKEY_CTL_F5 },
+		{ XKB_KEY_F6, TKEY_F6, TKEY_CTL_F6 },
+		{ XKB_KEY_F7, TKEY_F7, TKEY_CTL_F7 },
+		{ XKB_KEY_F8, TKEY_F8, TKEY_CTL_F8 },
+		{ XKB_KEY_F9, TKEY_F9, TKEY_CTL_F9 },
+		{ XKB_KEY_F10, TKEY_F10, TKEY_CTL_F10 },
+		{ XKB_KEY_F11, TKEY_F11, TKEY_CTL_F11 },
+		{ XKB_KEY_F12, TKEY_F12, TKEY_CTL_F12 }
 	};
 	const char *str = NULL;
 	unsigned int i;
 
 	for (i = 0; i < NELEM(sym_to_seq); i++) {
 		if (sym_to_seq[i].sym == sym) {
-			str = teken_get_sequence(&tek, sym_to_seq[i].t);
+			if (xkb_state_mod_name_is_active(state, "Control",
+			    XKB_STATE_MODS_EFFECTIVE) &&
+			    sym_to_seq[i].ctlt != 0) {
+				str = teken_get_sequence(&tek,
+				    sym_to_seq[i].ctlt);
+			} else {
+				str = teken_get_sequence(&tek, sym_to_seq[i].t);
+			}
 			if (str != NULL)
 				return snprintf(buf, len, "%s", str);
 		}
