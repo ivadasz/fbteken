@@ -363,32 +363,6 @@ fbteken_respond(void *thunk __unused, const void *arg __unused,
 }
 
 static void
-vtleave(int signum __unused)
-{
-	printf("vtleave\n");
-	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
-		perror("drmModeSetCrtc");
-	if (drmDropMaster(drmfd) != 0)
-		perror("drmDropMaster");
-	ioctl(ttyfd, VT_RELDISP, VT_TRUE);
-	active = false;
-}
-
-static void
-vtenter(int signum __unused)
-{
-	printf("vtenter\n");
-	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
-	ioctl(ttyfd, VT_ACTIVATE, vtnum);
-	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
-	if (drmSetMaster(drmfd) != 0)
-		perror("drmSetMaster");
-	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, drmfbid, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
-		perror("drmModeSetCrtc");
-	active = true;
-}
-
-static void
 vtconfigure(void)
 {
 	int fd, ret;
@@ -469,8 +443,8 @@ vtconfigure(void)
 		printf("ioctl VT_GETACTIVE failed\n");
 	}
 #endif
-	signal(SIGUSR1, vtleave);
-	signal(SIGUSR2, vtenter);
+	signal(SIGUSR1, SIG_IGN);
+	signal(SIGUSR2, SIG_IGN);
 #ifndef __linux__
 	if (ioctl(fd, KDSETMODE, KD_GRAPHICS) != 0)
 		warnx("KDSETMODE failed");
@@ -507,8 +481,8 @@ vtdeconf(void)
 	if(ret != 0) {
 		printf("ioctl VT_SETMODE failed\n");
 	}
-	signal(SIGUSR1, SIG_IGN);
-	signal(SIGUSR2, SIG_IGN);
+	signal(SIGUSR1, SIG_DFL);
+	signal(SIGUSR2, SIG_DFL);
 	/* Set tty settings to original values */
 	tcsetattr(fd, TCSAFLUSH, &origtios);
 
@@ -765,6 +739,8 @@ release(uint8_t code)
 	}
 }
 
+uint8_t lastread_code = 0;
+
 /* Reading keyboard input from the tty which was set into raw mode */
 static void
 ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
@@ -784,7 +760,6 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	uint8_t out[1024];
 	xkb_keycode_t keycode = 0;
 	xkb_keysym_t keysym;
-	static uint8_t lastcode = 0;
 	int newrep = 0;
 
 	for (i = 0; i < val; i++) {
@@ -806,7 +781,7 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			newrep = 1;
 		}
 
-		if (lastcode == buf[i] && at_ispress(buf[i]))
+		if (lastread_code == buf[i] && at_ispress(buf[i]))
 			continue;
 
 		char name[10];
@@ -816,25 +791,16 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		if (at_ispress(buf[i])) {
 			int switchvt = handle_vtswitch(keysym);
 			if (switchvt > 0) {
-				lastcode = 0;
-				repkeycode = 0;
-				repkeysym = 0;
-				evtimer_del(repeatev);
-				npressed = 0;
-				xkb_state_unref(state);
-				state = NULL;
-				state = xkb_state_new(keymap);
-				if (state == NULL)
-					errx(1, "xkb_state_new failed");
 				ioctl(ttyfd, VT_ACTIVATE, switchvt);
-				return;
 			}
-			int cnt;
-			cnt = handle_term_special_keysym(keysym, &out[n],
-			    sizeof(out) - n);
+			int cnt = 0;
+			if (switchvt <= 0) {
+				cnt = handle_term_special_keysym(keysym,
+				    &out[n], sizeof(out) - n);
+			}
 			if (cnt > 0) {
 				n += cnt;
-			} else {
+			} else if (switchvt <= 0) {
 				/*
 				 * XXX Alt should optionally be handled
 				 *     similarly to the Esc key.
@@ -857,7 +823,7 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		else
 			release(buf[i] & 0x7f);
 
-		lastcode = buf[i];
+		lastread_code = buf[i];
 	}
 
 	if (repkeycode == 0)
@@ -900,6 +866,46 @@ drmread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		warnx("drmHandleEvent failed");
 		event_base_loopbreak(evbase);
 	}
+}
+
+static void
+vtrelease(evutil_socket_t fd __unused, short events __unused,
+    void *arg __unused)
+{
+	printf("vtleave\n");
+
+	lastread_code = 0;
+	repkeycode = 0;
+	repkeysym = 0;
+	evtimer_del(repeatev);
+	npressed = 0;
+	xkb_state_unref(state);
+	state = NULL;
+	state = xkb_state_new(keymap);
+	if (state == NULL)
+		errx(1, "xkb_state_new failed");
+
+	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
+		perror("drmModeSetCrtc");
+	if (drmDropMaster(drmfd) != 0)
+		perror("drmDropMaster");
+	ioctl(ttyfd, VT_RELDISP, VT_TRUE);
+	active = false;
+}
+
+static void
+vtacquire(evutil_socket_t fd __unused, short events __unused,
+    void *arg __unused)
+{
+	printf("vtenter\n");
+	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
+	ioctl(ttyfd, VT_ACTIVATE, vtnum);
+	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
+	if (drmSetMaster(drmfd) != 0)
+		perror("drmSetMaster");
+	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, drmfbid, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
+		perror("drmModeSetCrtc");
+	active = true;
 }
 
 struct xkb_rule_names names = {
@@ -1174,7 +1180,7 @@ main(int argc, char *argv[])
 		termbuf[i].dirty = 0;
 	}
 
-	struct event *masterev, *ttyev, *drmev;
+	struct event *masterev, *ttyev, *drmev, *vtrelev, *vtacqev;
 
 	evbase = event_base_new();
 
@@ -1207,19 +1213,29 @@ main(int argc, char *argv[])
 	    EV_READ | EV_PERSIST, drmread, NULL);
 	event_priority_set(drmev, 1);
 
-	/* XXX create event for the signal handler for VT switching? */
+	vtrelev = evsignal_new(evbase, SIGUSR1, vtrelease, NULL);
+	event_priority_set(vtrelev, 0);
+
+	vtacqev = evsignal_new(evbase, SIGUSR2, vtacquire, NULL);
+	event_priority_set(vtacqev, 0);
 
 	event_add(masterev, NULL);
 	event_add(ttyev, NULL);
 	event_add(drmev, NULL);
+	event_add(vtrelev, NULL);
+	event_add(vtacqev, NULL);
 
 	event_base_loop(evbase, 0);
 
+	event_del(vtacqev);
+	event_del(vtrelev);
 	event_del(drmev);
 	event_del(ttyev);
 	event_del(repeatev);
 	event_del(masterev);
 
+	event_free(vtacqev);
+	event_free(vtrelev);
 	event_free(drmev);
 	event_free(ttyev);
 	event_free(repeatev);
