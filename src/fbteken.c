@@ -504,6 +504,20 @@ vtdeconf(void)
 }
 
 static void
+wait_vblank(void)
+{
+	if (active && dirtycount > 0) {
+		drmVBlank req = {
+			.request.type = _DRM_VBLANK_RELATIVE |
+					_DRM_VBLANK_EVENT,
+			.request.sequence = 1,
+			.request.signal = 0
+		};
+		drmWaitVBlank(drmfd, &req);
+	}
+}
+
+static void
 rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
 	int val;
@@ -523,15 +537,8 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			dirty_cell(oc.tp_col, oc.tp_row);
 			dirty_cell(cursorpos.tp_col, cursorpos.tp_row);
 		}
-		if (dirtycount > 0 && prevdirty == 0) {
-			drmVBlank req = {
-				.request.type = _DRM_VBLANK_RELATIVE |
-						_DRM_VBLANK_EVENT,
-				.request.sequence = 1,
-				.request.signal = 0
-			};
-			drmWaitVBlank(drmfd, &req);
-		}
+		if (prevdirty == 0)
+			wait_vblank();
 	} else {
 		event_base_loopbreak(evbase);
 	}
@@ -906,6 +913,8 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, drmfbid, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	active = true;
+
+	wait_vblank();
 }
 
 struct xkb_rule_names names = {
