@@ -998,6 +998,11 @@ main(int argc, char *argv[])
 	unsigned int repeat_delay = 200;
 	unsigned int repeat_rate = 30;
 
+	/* XXX make bold font setting optional, don't use separate bold font,
+	 *     when only the normal font is explicitly specified by the user.
+	 *     But use default normal and bold font when no option is given.
+	 */
+	/* XXX handle bitmap fonts better */
 	while ((ch = getopt(argc, argv, "aAf:F:k:o:v:s:h")) != -1) {
 		switch (ch) {
 		case 'a':
@@ -1101,6 +1106,7 @@ main(int argc, char *argv[])
 	teken_init(&tek, &tek_funcs, NULL);
 //	teken_set_defattr(&tek, &defattr);
 
+	/* XXX handle errors (e.g. when invalid font paths are given) */
 	rop = rop32_init(normalfont, boldfont, fontheight,
 	    &fnwidth, &fnheight, alpha);
 
