@@ -62,7 +62,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "fbdraw.h"
-#include <teken.h>
+#include "../libteken/teken.h"
 
 struct bufent {
 	teken_char_t ch;
@@ -1003,7 +1003,7 @@ main(int argc, char *argv[])
 	 *     But use default normal and bold font when no option is given.
 	 */
 	/* XXX handle bitmap fonts better */
-	while ((ch = getopt(argc, argv, "aAf:F:k:o:v:s:h")) != -1) {
+	while ((ch = getopt(argc, argv, "aAd:r:f:F:k:o:v:s:h")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
