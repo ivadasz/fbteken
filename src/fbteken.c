@@ -716,10 +716,51 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 	return 0;
 }
 
+drmModeConnectorPtr conn = NULL;
+
+static void
+setdpms(int level)
+{
+	int i;
+	drmModePropertyPtr prop = NULL, props;
+
+	static int mode = DRM_MODE_DPMS_ON;
+
+	if (level == mode)
+		return;
+
+	for (i = 0; i < conn->count_props; i++) {
+		props = drmModeGetProperty(drmfd, conn->props[i]);
+		if (props == NULL)
+			continue;
+
+		if (strcmp(props->name, "DPMS") == 0) {
+			prop = props;
+			break;
+		}
+		drmModeFreeProperty(props);
+	}
+
+	if (prop == NULL)
+		return;
+
+	drmModeConnectorSetProperty(drmfd, conn->connector_id, prop->prop_id,
+	    level);
+	drmModeFreeProperty(prop);
+	mode = level;
+}
+
 static int
 handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 {
 	int cnt = 0, switchvt;
+
+	if (sym == XKB_KEY_Print) {
+		setdpms(DRM_MODE_DPMS_SUSPEND);
+		return 0;
+	} else {
+		setdpms(DRM_MODE_DPMS_ON);
+	}
 
 	if ((switchvt = handle_vtswitch(sym)) > 0) {
 		ioctl(ttyfd, VT_ACTIVATE, switchvt);
@@ -894,6 +935,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 {
 	printf("vtleave\n");
 
+	setdpms(DRM_MODE_DPMS_ON);
 	lastread_code = 0;
 	repkeycode = 0;
 	repkeysym = 0;
@@ -996,7 +1038,6 @@ main(int argc, char *argv[])
 	uint32_t width, height;
 	drmModeResPtr res;
 	drmModeCrtcPtr crtc;
-	drmModeConnectorPtr conn;
 	drmModeEncoderPtr enc;
 	char *shell;
 	teken_pos_t winsize;
@@ -1335,6 +1376,7 @@ main(int argc, char *argv[])
 	event_add(vtacqev, NULL);
 
 	event_base_loop(evbase, 0);
+	setdpms(DRM_MODE_DPMS_ON);
 
 	event_del(vtacqev);
 	event_del(vtrelev);
