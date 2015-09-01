@@ -972,6 +972,13 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	wait_vblank();
 }
 
+static void
+handleterm(evutil_socket_t fd __unused, short events __unused,
+    void *arg __unused)
+{
+	event_base_loopbreak(evbase);
+}
+
 struct xkb_rule_names names = {
 	.rules = "evdev",
 	.model = "pc104",
@@ -1328,7 +1335,7 @@ main(int argc, char *argv[])
 		termbuf[i].dirty = 0;
 	}
 
-	struct event *masterev, *ttyev, *drmev, *vtrelev, *vtacqev;
+	struct event *masterev, *ttyev, *drmev, *vtrelev, *vtacqev, *sigintev;
 
 	evbase = event_base_new();
 
@@ -1367,17 +1374,22 @@ main(int argc, char *argv[])
 	vtacqev = evsignal_new(evbase, SIGUSR2, vtacquire, NULL);
 	event_priority_set(vtacqev, 0);
 
-	/* XXX Add a signal handler for SIGTERM */
+	signal(SIGINT, SIG_IGN);
+	sigintev = evsignal_new(evbase, SIGINT, handleterm, NULL);
+	event_priority_set(sigintev, 0);
 
 	event_add(masterev, NULL);
 	event_add(ttyev, NULL);
 	event_add(drmev, NULL);
 	event_add(vtrelev, NULL);
 	event_add(vtacqev, NULL);
+	event_add(sigintev, NULL);
 
 	event_base_loop(evbase, 0);
+	signal(SIGINT, SIG_DFL);
 	setdpms(DRM_MODE_DPMS_ON);
 
+	event_del(sigintev);
 	event_del(vtacqev);
 	event_del(vtrelev);
 	event_del(drmev);
@@ -1385,6 +1397,7 @@ main(int argc, char *argv[])
 	event_del(repeatev);
 	event_del(masterev);
 
+	event_free(sigintev);
 	event_free(vtacqev);
 	event_free(vtrelev);
 	event_free(drmev);
