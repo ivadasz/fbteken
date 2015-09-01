@@ -716,6 +716,31 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 	return 0;
 }
 
+static int
+handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
+{
+	int cnt = 0, switchvt;
+
+	if ((switchvt = handle_vtswitch(sym)) > 0) {
+		ioctl(ttyfd, VT_ACTIVATE, switchvt);
+		return 0;
+	}
+	cnt = handle_term_special_keysym(sym, buf, len);
+	if (cnt > 0)
+		return cnt;
+
+	/*
+	 * XXX Alt should optionally be handled
+	 *     similarly to the Esc key.
+	 *
+	 * XXX In X the left Alt key is an additional
+	 *      modifier key, we should try to emulate
+	 *      that behaviour.
+	 */
+	/* XXX handle composition (e.g. accents) */
+	return xkb_state_key_get_utf8(state, code, buf, len);
+}
+
 /* Just track all keys for now, to avoid stuck modifiers */
 uint8_t pressed[256];
 int npressed = 0;
@@ -771,11 +796,11 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		event_base_loopbreak(evbase);
 	}
 
-	int i, n = 0;
 	uint8_t out[1024];
 	xkb_keycode_t keycode = 0;
 	xkb_keysym_t keysym;
 	int newrep = 0;
+	int i, n = 0;
 
 	for (i = 0; i < val; i++) {
 		keycode = at_toxkb(buf[i]);
@@ -801,33 +826,13 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 
 		char name[10];
 		xkb_keysym_get_name(keysym, name, 10);
+#if 0
 		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n",
 		    buf[i], keycode, name);
+#endif
 		if (at_ispress(buf[i])) {
-			int switchvt = handle_vtswitch(keysym);
-			if (switchvt > 0) {
-				ioctl(ttyfd, VT_ACTIVATE, switchvt);
-			}
-			int cnt = 0;
-			if (switchvt <= 0) {
-				cnt = handle_term_special_keysym(keysym,
-				    &out[n], sizeof(out) - n);
-			}
-			if (cnt > 0) {
-				n += cnt;
-			} else if (switchvt <= 0) {
-				/*
-				 * XXX Alt should optionally be handled
-				 *     similarly to the Esc key.
-				 *
-				 * XXX In X the left Alt key is an additional
-				 *      modifier key, we should try to emulate
-				 *      that behaviour.
-				 */
-				/* XXX handle composition (e.g. accents) */
-				n += xkb_state_key_get_utf8(state, keycode,
-				    &out[n], sizeof(out) - n);
-			}
+			n += handle_keypress(keycode, keysym, &out[n],
+			    sizeof(out) - n);
 		}
 		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f))) {
 			xkb_state_update_key(state, keycode,
@@ -1320,6 +1325,8 @@ main(int argc, char *argv[])
 
 	vtacqev = evsignal_new(evbase, SIGUSR2, vtacquire, NULL);
 	event_priority_set(vtacqev, 0);
+
+	/* XXX Add a signal handler for SIGTERM */
 
 	event_add(masterev, NULL);
 	event_add(ttyev, NULL);
