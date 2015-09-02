@@ -542,11 +542,13 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 
 	if (self->doalpha)
 		error = FTC_SBitCache_LookupScaler(self->sbit,
-		    (flags & 2) ? &self->boldscaler : &self->scaler,
+		    ((flags & 2) && self->boldfid.file_path != NULL) ?
+		    &self->boldscaler : &self->scaler,
 		    FT_LOAD_RENDER, idx, &sbit, NULL);
 	else
 		error = FTC_SBitCache_LookupScaler(self->sbit,
-		    (flags & 2) ? &self->boldscaler : &self->scaler,
+		    ((flags & 2) && self->boldfid.file_path != NULL) ?
+		    &self->boldscaler : &self->scaler,
 		    FT_LOAD_RENDER | FT_LOAD_MONOCHROME, idx, &sbit, NULL);
 	if (error) {
 		printf("Failed to lookup in sbitcache\n");
