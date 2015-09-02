@@ -1032,8 +1032,8 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s [-a | -A] [-d delay] [-r rate] [-f fontfile] "
-	    "[-F bold_fontfile] [-s fontsize] [-k kbd_layout] "
+	    "usage: %s [-a | -A] [-d delay] [-r rate] [-f fontfile "
+	    "[-F bold_fontfile]] [-s fontsize] [-k kbd_layout] "
 	    "[-o kbd_options] [-h]\n", getprogname());
 	exit(1);
 }
@@ -1060,11 +1060,8 @@ main(int argc, char *argv[])
 	unsigned int repeat_delay = 200;
 	unsigned int repeat_rate = 30;
 
-	/* XXX make bold font setting optional, don't use separate bold font,
-	 *     when only the normal font is explicitly specified by the user.
-	 *     But use default normal and bold font when no option is given.
-	 */
 	/* XXX handle bitmap fonts better */
+	/* XXX Add option for idle timeout before DPMS is triggered */
 	while ((ch = getopt(argc, argv, "aAd:r:f:F:k:o:v:s:h")) != -1) {
 		switch (ch) {
 		case 'a':
@@ -1138,17 +1135,24 @@ main(int argc, char *argv[])
 	char default_boldfont[] =
 	    "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 #endif
-	if (normalfont == NULL)
-		normalfont = default_normalfont;
-	if (boldfont == NULL)
-		boldfont = default_boldfont;
+
 #if 0
 	/* e.g. a bitmap font */
 	char *normalfont = "/usr/local/lib/X11/fonts/misc/9x15.pcf.gz";
 	char *boldfont = "/usr/local/lib/X11/fonts/misc/9x15.pcf.gz";
-	unsigned int fontheight = 15;
-	bool alpha = false;
+	fontheight = 15;
+	alpha = false;
 #endif
+
+	if (boldfont != NULL && normalfont == NULL) {
+		/* That doesn't really make any sense */
+		errx(1, "Only a bold font was specified, this doesn't make "
+		    "sense!\n");
+	}
+	if (boldfont == NULL && normalfont == NULL)
+		boldfont = default_boldfont;
+	if (normalfont == NULL)
+		normalfont = default_normalfont;
 
 	char termenv[] = "TERM=xterm";
 	char defaultshell[] = "/bin/sh";
@@ -1350,6 +1354,8 @@ main(int argc, char *argv[])
 	 * Highest priority: 0 signal handlers
 	 */
 	event_base_priority_init(evbase, 5),
+
+	/* XXX Add event for idle timer (triggering DPMS after some time) */
 
 	masterev = event_new(evbase, amaster,
 	    EV_READ | EV_PERSIST, rdmaster, NULL);

@@ -88,9 +88,33 @@ my_face_requester(FTC_FaceID face_id, FT_Library library,
 	return FT_New_Face(library, face->file_path, face->face_index, aface);
 }
 
+static int
+openfont(FTC_Manager manager, MyFaceRec *fid, FT_Face *face)
+{
+	int error;
+
+	error = FTC_Manager_LookupFace(manager, fid, face);
+	if (error)
+		return error;
+
+#if 0
+	printf("There are %d faces embedded into the font \"%s\"\n",
+	    face->num_faces, fid->file_path);
+	printf("There are %d fixed sizes embedded into the font \"%s\"\n",
+	    face->num_fixed_sizes, fid->file_path);
+	printf("Fixed sizes:");
+	for (i = 0; i < face->num_fixed_sizes; i++)
+		printf(" %d", face->available_sizes[i].height);
+	printf("\n");
+#endif
+
+	return 0;
+}
+
 /* ARGSUSED */
 struct rop_obj *
-rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool alpha)
+rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height,
+    bool alpha)
 {
 	struct rop_obj *self;
 	char default_fp[] = "/usr/X11R7/lib/X11/fonts/TTF/VeraMono.ttf";
@@ -107,13 +131,14 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 
 	self->doalpha = alpha;
 
+	if (fp == NULL && boldfp == NULL)
+		boldfp = default_boldfp;
 	if (fp == NULL)
 		fp = default_fp;
-	if (boldfp == NULL)
-		boldfp = default_boldfp;
+
 	self->fid.file_path = fp;
 	self->fid.face_index = 0;
-	self->boldfid.file_path = boldfp;
+	self->boldfid.file_path = NULL;
 	self->boldfid.face_index = 0;
 	error = FT_Init_FreeType(&self->library);
 	if (error) {
@@ -141,7 +166,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		return NULL;
 	}
 
-	error = FTC_Manager_LookupFace(self->manager, &self->fid, &self->face);
+	error = openfont(self->manager, &self->fid, &self->face);
 	if (error == FT_Err_Unknown_File_Format) {
 		printf("Font format of \"%s\" is unsupported\n", fp);
 		return NULL;
@@ -149,18 +174,10 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		printf("Failed to initialize font \"%s\"\n", fp);
 		return NULL;
 	}
-#if 0
-	printf("There are %d faces embedded into the font \"%s\"\n",
-	    self->face->num_faces, fp);
-	printf("There are %d fixed sizes embedded into the font \"%s\"\n",
-	    self->face->num_fixed_sizes, fp);
-	printf("Fixed sizes:");
-	for (i = 0; i < self->face->num_fixed_sizes; i++)
-		printf(" %d", self->face->available_sizes[i].height);
-	printf("\n");
-#endif
 
-	error = FTC_Manager_LookupFace(self->manager, &self->boldfid, &self->boldface);
+	if (self->boldfid.file_path == NULL)
+		goto skipbold;
+	error = openfont(self->manager, &self->boldfid, &self->boldface);
 	if (error == FT_Err_Unknown_File_Format) {
 		printf("Font format of \"%s\" is unsupported\n", boldfp);
 		return NULL;
@@ -168,18 +185,13 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		printf("Failed to initialize font \"%s\"\n", boldfp);
 		return NULL;
 	}
-#if 0
-	printf("There are %d faces embedded into the font \"%s\"\n",
-	    self->boldface->num_faces, boldfp);
-	printf("There are %d fixed sizes embedded into the font \"%s\"\n",
-	    self->boldface->num_fixed_sizes, boldfp);
-	printf("Fixed sizes:");
-	for (i = 0; i < self->boldface->num_fixed_sizes; i++)
-		printf(" %d", self->boldface->available_sizes[i].height);
-	printf("\n");
-#endif
+skipbold:
 
 #if 0
+	/*
+	 * XXX This logic would need to synchronize settings with the bold
+	 *     font as well.
+	 */
 	printf("num of charmaps: %d\n", self->face->num_charmaps);
 	for (i = 0; i < self->face->num_charmaps; i++) {
 		printf("id: %d\n", self->face->charmaps[i]->encoding_id);
@@ -215,6 +227,8 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 	if (fn_height != NULL)
 		*fn_height = self->fontheight;
 
+	if (self->boldfid.file_path == NULL)
+		goto skipboldscaler;
 	self->boldscaler.face_id = &self->boldfid;
 	self->boldscaler.pixel = 1;
 	self->boldscaler.height = h;
@@ -225,6 +239,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height, bool al
 		printf("Failed to set pixel size %d for font \"%s\"\n", h, boldfp);
 		return NULL;
 	}
+skipboldscaler:
 
 	return self;
 }
@@ -518,7 +533,10 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 	int error;
 	int16_t bty;
 
-	idx = FTC_CMapCache_Lookup(self->cmc, (flags & 2) ? &self->boldfid : &self->fid, self->cmap_idx, c);
+	idx = FTC_CMapCache_Lookup(self->cmc,
+	    ((flags & 2) && self->boldfid.file_path != NULL) ?
+	    &self->boldfid : &self->fid,
+	    self->cmap_idx, c);
 	if (idx == 0)
 		printf("cmapcache_lookup for 0x%08x failed\n", c);
 
