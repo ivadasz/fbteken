@@ -82,6 +82,7 @@ void	fbteken_param(void *thunk, int param, unsigned int val);
 void	fbteken_respond(void *thunk, const void *arg, size_t sz);
 
 static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len);
+static void	setdpms(int level);
 
 int ttyfd;
 int drmfd;
@@ -89,6 +90,8 @@ int drmfd;
 struct xkb_context *ctx;
 struct xkb_keymap *keymap;
 struct xkb_state *state;
+
+int idle_timeout = 0;	/* idle timeout (in s) */
 
 struct kms_driver *kms;
 struct kms_bo *bo;
@@ -517,6 +520,20 @@ wait_vblank(void)
 	}
 }
 
+struct event *idleev;
+
+/* idle timeout */
+struct timeval idletv = { .tv_sec = 0, .tv_usec = 0 };
+
+static void
+handleidle(evutil_socket_t fd __unused, short events __unused,
+    void *arg __unused)
+{
+	setdpms(DRM_MODE_DPMS_SUSPEND);
+
+	event_add(idleev, &idletv);
+}
+
 static void
 rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
@@ -754,6 +771,10 @@ static int
 handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 {
 	int cnt = 0, switchvt;
+
+	/* Reset idle timeout */
+	if (idleev != NULL)
+		event_add(idleev, &idletv);
 
 	if (sym == XKB_KEY_Print) {
 		setdpms(DRM_MODE_DPMS_SUSPEND);
@@ -1033,8 +1054,8 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: %s [-a | -A] [-d delay] [-r rate] [-f fontfile "
-	    "[-F bold_fontfile]] [-s fontsize] [-k kbd_layout] "
-	    "[-o kbd_options] [-h]\n", getprogname());
+	    "[-F bold_fontfile]] [-i idle_timeout] [-s fontsize] "
+	    "[-k kbd_layout] [-o kbd_options] [-h]\n", getprogname());
 	exit(1);
 }
 
@@ -1061,8 +1082,7 @@ main(int argc, char *argv[])
 	unsigned int repeat_rate = 30;
 
 	/* XXX handle bitmap fonts better */
-	/* XXX Add option for idle timeout before DPMS is triggered */
-	while ((ch = getopt(argc, argv, "aAd:r:f:F:k:o:v:s:h")) != -1) {
+	while ((ch = getopt(argc, argv, "aAd:r:f:F:i:k:o:v:s:h")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
@@ -1082,6 +1102,13 @@ main(int argc, char *argv[])
 			break;
 		case 'F':
 			boldfont = optarg;
+			break;
+		case 'i':
+			idle_timeout = strtonum(optarg, 30, 60*60*24, &errstr);
+			if (errstr) {
+				errx(1, "idle timeout is %s: %s", errstr,
+				    optarg);
+			}
 			break;
 		case 'k':
 			kbd_layout = optarg;
@@ -1346,16 +1373,21 @@ main(int argc, char *argv[])
 	/*
 	 * This design tries to keep things interactive for the user.
 	 *
-	 * Lowest priority:  4 input from the master fd of the pty device
+	 * Lowest priority:  5 idle timeout timer event
+	 *     ||            4 input from the master fd of the pty device
 	 *     ||            3 automatic key-repeat input from the terminal
 	 *     ||            2 keyboard input from the terminal
 	 *     ||            2 output to the master fd of the pty device
 	 *     vv            1 vblank events from the drm device
 	 * Highest priority: 0 signal handlers
 	 */
-	event_base_priority_init(evbase, 5),
+	event_base_priority_init(evbase, 6);
 
-	/* XXX Add event for idle timer (triggering DPMS after some time) */
+	if (idle_timeout > 0) {
+		idletv.tv_sec = idle_timeout;
+		idleev = evtimer_new(evbase, handleidle, NULL);
+		event_priority_set(idleev, 5);
+	}
 
 	masterev = event_new(evbase, amaster,
 	    EV_READ | EV_PERSIST, rdmaster, NULL);
@@ -1384,6 +1416,8 @@ main(int argc, char *argv[])
 	sigintev = evsignal_new(evbase, SIGINT, handleterm, NULL);
 	event_priority_set(sigintev, 0);
 
+	if (idleev != NULL)
+		event_add(idleev, &idletv);
 	event_add(masterev, NULL);
 	event_add(ttyev, NULL);
 	event_add(drmev, NULL);
@@ -1402,6 +1436,8 @@ main(int argc, char *argv[])
 	event_del(ttyev);
 	event_del(repeatev);
 	event_del(masterev);
+	if (idleev != NULL)
+		event_del(idleev);
 
 	event_free(sigintev);
 	event_free(vtacqev);
@@ -1410,9 +1446,12 @@ main(int argc, char *argv[])
 	event_free(ttyev);
 	event_free(repeatev);
 	event_free(masterev);
+	if (idleev != NULL)
+		event_free(idleev);
 	event_base_free(evbase);
 
-	drmModeSetCrtc(fd, crtc->crtc_id, oldbuffer_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
+	drmModeSetCrtc(fd, crtc->crtc_id, oldbuffer_id, 0, 0,
+	    &conn->connector_id, 1, &crtc->mode);
 	vtdeconf();
 	drmModeRmFB(fd, fb_id);
 
