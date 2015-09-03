@@ -546,6 +546,20 @@ static const char * const special_strings_normal[] = {
 	[TKEY_CTL_F7] = "\x1B[18;5~",	[TKEY_CTL_F8] = "\x1B[19;5~",
 	[TKEY_CTL_F9] = "\x1B[20;5~",	[TKEY_CTL_F10] = "\x1B[21;5~",
 	[TKEY_CTL_F11] = "\x1B[23;5~",	[TKEY_CTL_F12] = "\x1B[24;5~",
+
+	[TKEY_ALT_UP] = "\x1B[1;3A",	[TKEY_ALT_DOWN] = "\x1B[1;3B",
+	[TKEY_ALT_LEFT] = "\x1B[1;3D",	[TKEY_ALT_RIGHT] = "\x1B[1;3C",
+
+	[TKEY_ALT_HOME] = "\x1B[1;3H",	[TKEY_ALT_END] = "\x1B[1;3F",
+	[TKEY_ALT_INSERT] = "\x1B[2;3~", [TKEY_ALT_DELETE] = "\x1B[3;3~",
+	[TKEY_ALT_PAGE_UP] = "\x1B[5;3~", [TKEY_ALT_PAGE_DOWN] = "\x1B[6;3~",
+
+	[TKEY_ALT_F1] = "\x1B\1;3P",	[TKEY_ALT_F2] = "\x1B\1;3Q",
+	[TKEY_ALT_F3] = "\x1B\1;3R",	[TKEY_ALT_F4] = "\x1B\1;3S",
+	[TKEY_ALT_F5] = "\x1B[15;3~",	[TKEY_ALT_F6] = "\x1B[17;3~",
+	[TKEY_ALT_F7] = "\x1B[18;3~",	[TKEY_ALT_F8] = "\x1B[19;3~",
+	[TKEY_ALT_F9] = "\x1B[20;3~",	[TKEY_ALT_F10] = "\x1B[21;3~",
+	[TKEY_ALT_F11] = "\x1B[23;3~",	[TKEY_ALT_F12] = "\x1B[24;3~",
 };
 
 const char *

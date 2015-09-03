@@ -221,6 +221,31 @@ void	teken_set_winsize_noreset(teken_t *, const teken_pos_t *);
 #define	TKEY_CTL_F10	0x29
 #define	TKEY_CTL_F11	0x2a
 #define	TKEY_CTL_F12	0x2b
+
+#define	TKEY_ALT_UP	0x2c
+#define	TKEY_ALT_DOWN	0x2d
+#define	TKEY_ALT_LEFT	0x2e
+#define	TKEY_ALT_RIGHT	0x2f
+
+#define	TKEY_ALT_HOME	0x30
+#define	TKEY_ALT_END	0x31
+#define	TKEY_ALT_INSERT	0x32
+#define	TKEY_ALT_DELETE	0x33
+#define	TKEY_ALT_PAGE_UP	0x34
+#define	TKEY_ALT_PAGE_DOWN	0x35
+
+#define	TKEY_ALT_F1	0x36
+#define	TKEY_ALT_F2	0x37
+#define	TKEY_ALT_F3	0x38
+#define	TKEY_ALT_F4	0x39
+#define	TKEY_ALT_F5	0x3a
+#define	TKEY_ALT_F6	0x3b
+#define	TKEY_ALT_F7	0x3c
+#define	TKEY_ALT_F8	0x3d
+#define	TKEY_ALT_F9	0x3e
+#define	TKEY_ALT_F10	0x3f
+#define	TKEY_ALT_F11	0x40
+#define	TKEY_ALT_F12	0x41
 const char *teken_get_sequence(teken_t *, unsigned int);
 
 /* Legacy features. */
