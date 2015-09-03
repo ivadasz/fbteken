@@ -678,8 +678,8 @@ handle_vtswitch(xkb_keysym_t sym)
 }
 
 /*
- * XXX Need to insert escape sequence explicitly here, when ALT key is
- *     pressed.
+ * XXX All the Ctl-Alt-XXX sequences are also handled specially in xterm
+ *     (except for the F-Keys which trigger Xorg's vt-switching with Ctl-Alt).
  */
 static int
 handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
@@ -798,12 +798,13 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 		return cnt;
 
 	/*
-	 * XXX Alt should optionally be handled
-	 *     similarly to the Esc key.
+	 * XXX If the Alt modifier is pressed, we should optionally
+	 *     insert an Esc character before each character code.
+	 *     (For this we might have to mask the Alt modifier for the
+	 *      keycode-to-keysym translation part).
 	 *
-	 * XXX In X the left Alt key is an additional
-	 *      modifier key, we should try to emulate
-	 *      that behaviour.
+	 * XXX In X the left Alt key is an additional modifier key,
+	 *     we might want to optionally emulate that behaviour.
 	 */
 	/* XXX handle composition (e.g. accents) */
 	return xkb_state_key_get_utf8(state, code, buf, len);
