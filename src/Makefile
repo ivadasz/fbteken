@@ -1,7 +1,6 @@
 PROG=	fbteken
 SRCS=	fbteken.c rop32.c
 HDRS=	fbdraw.h
-MAN=
 
 .if exists(${.OBJDIR}/../libteken)
 LIBTEKEN=${.OBJDIR}/../libteken/libteken.a
