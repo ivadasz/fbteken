@@ -1,0 +1,118 @@
+.\" Copyright (c) 2015 Imre Vadasz.  All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\"
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in
+.\"    the documentation and/or other materials provided with the
+.\"    distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+.\" LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+.\" FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+.\" COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+.\" INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES (INCLUDING,
+.\" BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+.\" LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+.\" AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+.\" OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+.\" OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd September 03, 2015
+.Dt FBTEKEN 1
+.Os
+.Sh NAME
+.Nm fbteken
+.Nd userspace terminal-emulator using libdrm/libkms
+.Sh SYNOPSIS
+.Nm fbteken
+.Op Fl a | A
+.Op Fl h
+.Op Fl d Ar delay
+.Op Fl f Ar fontfile Op Fl F Ar bold_fontfile
+.Op Fl i Ar idle_timeout
+.Op Fl k Ar kbd_layout
+.Op Fl o Ar kbd_options
+.Op Fl r Ar rate
+.Op Fl s Ar fontsize
+.Sh DESCRIPTION
+The
+.Nm fbteken
+command runs an xterm compatible terminal emulator.
+Similarly to Xorg, a new virtual terminal is allocated for this.
+With the keyboard combinations
+.Li Ctrl-Alt-F1
+(or
+.Li Ctrl-Alt-F2 ,
+.Li Ctrl-Alt-F3 ,
+etc.), it is possible to switch back to other virtual terminals
+managed by
+.Xr syscons 4 .
+By pressing the
+.Li Print
+key, the screen is immediately put into DPMS state, and turned off.
+When other keyboard keys are pressed, the display is automatically re-enabled.
+.Pp
+The following options are available:
+.Bl -tag -width ".Fl F Ar bold_fontfile"
+.It Fl a
+Enable antialiased font rendering.
+.It Fl A
+Disable antialiased font rendering.
+.It Fl d Ar delay
+Set initial key repeat delay to
+.Ar delay
+milliseconds.
+.It Fl f Ar fontfile
+Specify the font to be used instead of the default specified at compile time.
+This should preferably specify a monospaced truetype font.
+.It Fl F Ar bold_fontfile
+Specify a separate font for bold font rendering.
+If neither the
+.Fl f
+nor
+.Fl F
+options are used, a default bold font is used.
+If only
+.Fl f
+is specified, everything is rendered using the normal font.
+.It Fl i Ar idle_timeout
+Specifies a timeout (in seconds) since the last key press, until the display
+is automatically turned off.
+By default, or when
+.Ar idle_timeout
+is specified as
+.Li 0 ,
+the display is never turned off automatically.
+.It Fl k Ar kbd_layout
+Specifies the keyboard layout (e.g.
+.Li Dq de
+or
+.Li Dq us
+etc.) similarly to the
+.Li XkbLayout
+option in the
+.Xr xorg.conf 5
+configuration file for
+.Xr Xorg 1 .
+.It Fl o Ar kbd_options
+Specifies the keyboard options (similar to the
+.Li XkbOptions
+setting in
+.Xr xorg.conf 5 ).
+.It Fl r Ar rate
+Specifies the number of key repeats per second.
+.It Fl s Ar fontsize
+Specifies the font height in pixels.
+.El
+.Sh SEE ALSO
+.Xr drm 4 ,
+.Xr syscons 4 ,
+.Sh AUTHORS
+.An Imre Vadasz Aq Mt imre@vdsz.com
