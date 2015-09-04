@@ -561,6 +561,24 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	}
 }
 
+static int
+fbteken_key_get_utf8(xkb_keycode_t code, uint8_t *buf, int len)
+{
+	int n = 0;
+
+	/* XXX Add a command line flag to toggle this behaviour */
+	if (xkb_state_mod_name_is_active(state,
+	    "Mod1", XKB_STATE_MODS_EFFECTIVE)) {
+		if (len > 0) {
+			buf[0] = 0x1b;
+			n++;
+		}
+	}
+	n += xkb_state_key_get_utf8(state, code, &buf[n], len - n);
+
+	return n;
+}
+
 struct event *repeatev;
 xkb_keycode_t repkeycode = 0;
 xkb_keysym_t repkeysym = 0;
@@ -582,8 +600,7 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 		n = handle_term_special_keysym(repkeysym, out, sizeof(out));
 		if (n <= 0) {
 			/* XXX handle composition (e.g. accents) */
-			n = xkb_state_key_get_utf8(state, repkeycode, out,
-			    sizeof(out));
+			n = fbteken_key_get_utf8(repkeycode, out, sizeof(out));
 		}
 		evtimer_add(repeatev, &reprate);
 		if (n > 0)
@@ -798,16 +815,11 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 		return cnt;
 
 	/*
-	 * XXX If the Alt modifier is pressed, we should optionally
-	 *     insert an Esc character before each character code.
-	 *     (For this we might have to mask the Alt modifier for the
-	 *      keycode-to-keysym translation part).
-	 *
 	 * XXX In X the left Alt key is an additional modifier key,
 	 *     we might want to optionally emulate that behaviour.
 	 */
 	/* XXX handle composition (e.g. accents) */
-	return xkb_state_key_get_utf8(state, code, buf, len);
+	return fbteken_key_get_utf8(code, buf, len);
 }
 
 /* Just track all keys for now, to avoid stuck modifiers */
