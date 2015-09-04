@@ -566,15 +566,18 @@ fbteken_key_get_utf8(xkb_keycode_t code, uint8_t *buf, int len)
 {
 	int n = 0;
 
+	n += xkb_state_key_get_utf8(state, code, buf, len);
+
 	/* XXX Add a command line flag to toggle this behaviour */
 	if (xkb_state_mod_name_is_active(state,
 	    "Mod1", XKB_STATE_MODS_EFFECTIVE)) {
-		if (len > 0) {
+		if (n > 0 && n + 1 < len) {
+			memmove(buf + 1, buf, n);
 			buf[0] = 0x1b;
 			n++;
+			buf[n] = 0;
 		}
 	}
-	n += xkb_state_key_get_utf8(state, code, &buf[n], len - n);
 
 	return n;
 }
