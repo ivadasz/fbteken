@@ -719,7 +719,7 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 	for (i = 0; i < NELEM(sym_to_seq); i++) {
 		if (sym_to_seq[i].sym == sym) {
 			if (xkb_state_mod_name_is_active(state,
-			    "Alt", XKB_STATE_MODS_EFFECTIVE) &&
+			    "Mod1", XKB_STATE_MODS_EFFECTIVE) &&
 			    sym_to_seq[i].altt != 0) {
 				str = teken_get_sequence(&tek,
 				    sym_to_seq[i].altt);
