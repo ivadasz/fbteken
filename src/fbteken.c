@@ -282,7 +282,6 @@ set_cell_fast(uint16_t col, uint16_t row, teken_char_t ch,
 {
 	termbuf1[row * winsz.ws_col + col].ch = ch;
 	termbuf1[row * winsz.ws_col + col].attr = *attr;
-	dirty_cell_fast(col, row);
 }
 
 void
@@ -368,6 +367,7 @@ fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
 			}
 		}
 	}
+	dirtyflag = 1;
 }
 
 void
