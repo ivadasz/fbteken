@@ -171,6 +171,23 @@ teken_attr_t white_defattr = {
 
 struct event_base *evbase;
 
+/* Synchronize xkbcommon keyboard LED state to the hardware keyboard */
+static void
+update_kbd_leds(void)
+{
+	int ledstate = 0;
+
+	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_CAPS))
+		ledstate |= CLKED;
+	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_NUM))
+		ledstate |= NLKED;
+	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_SCROLL))
+		ledstate |= SLKED;
+
+	if (ioctl(ttyfd, KDSETLED, ledstate) != 0)
+		warn("KDSETLED");
+}
+
 static void
 dirty_cell_slow(uint16_t col, uint16_t row)
 {
@@ -902,6 +919,7 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	uint8_t out[1024];
 	xkb_keycode_t keycode = 0;
 	xkb_keysym_t keysym;
+	enum xkb_state_component stcomp;
 	int newrep = 0;
 	int i, n = 0;
 
@@ -938,8 +956,11 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			    sizeof(out) - n);
 		}
 		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f))) {
-			xkb_state_update_key(state, keycode,
+			stcomp = xkb_state_update_key(state, keycode,
 			    at_ispress(buf[i]) ? XKB_KEY_DOWN : XKB_KEY_UP);
+			if (stcomp & XKB_STATE_LEDS) {
+				update_kbd_leds();
+			}
 		}
 		if (at_ispress(buf[i]))
 			press(buf[i] & 0x7f);
@@ -1048,6 +1069,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	state = xkb_state_new(keymap);
 	if (state == NULL)
 		errx(1, "xkb_state_new failed");
+	update_kbd_leds();
 
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
 		perror("drmModeSetCrtc");

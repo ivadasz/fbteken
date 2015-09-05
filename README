@@ -25,3 +25,5 @@ Keycode translation is currently tailored towards ISO and ANSI keyboard
 layouts. Special keys from e.g. japanese keyboards aren't handled yet.
 
 No support for keyboard LEDs yet.
+
+No support for a history buffer yet.
