@@ -153,10 +153,11 @@ uint32_t colormap[TC_NCOLORS * 2] = {
  * XXX organize termbuf as a linear array of pointers to rows, to reduce the
  *     cost of scrolling operations.
  */
-struct bufent *termbuf;
+struct bufent *termbuf1, *termbuf2;
 teken_pos_t cursorpos;
 int keypad, showcursor;
 uint32_t *dirtybuf, dirtycount = 0;
+int dirtyflag = 0;
 teken_attr_t defattr = {
 	ta_format : 0,
 	ta_fgcolor : TC_WHITE,
@@ -166,13 +167,19 @@ teken_attr_t defattr = {
 struct event_base *evbase;
 
 static void
-dirty_cell(uint16_t col, uint16_t row)
+dirty_cell_slow(uint16_t col, uint16_t row)
 {
-	if (!termbuf[row * winsz.ws_col + col].dirty) {
-		termbuf[row * winsz.ws_col + col].dirty = 1;
+	if (!dirtyflag && !termbuf1[row * winsz.ws_col + col].dirty) {
+		termbuf1[row * winsz.ws_col + col].dirty = 1;
 		dirtybuf[dirtycount] = row * winsz.ws_col + col;
 		dirtycount++;
 	}
+}
+
+static void
+dirty_cell_fast(uint16_t col __unused, uint16_t row __unused)
+{
+	dirtyflag = 1;
 }
 
 static void
@@ -185,7 +192,7 @@ render_cell(uint16_t col, uint16_t row)
 	uint32_t bg, fg, val;
 	int cursor, flags = 0;
 
-	cell = &termbuf[row * winsz.ws_col + col];
+	cell = &termbuf1[row * winsz.ws_col + col];
 	attr = &cell->attr;
 	cursor = cell->cursor;
 	ch = cell->ch;
@@ -230,22 +237,52 @@ render_cell(uint16_t col, uint16_t row)
 }
 
 static void
-set_cell(uint16_t col, uint16_t row, teken_char_t ch, const teken_attr_t *attr)
+set_cell_slow(uint16_t col, uint16_t row, teken_char_t ch,
+    const teken_attr_t *attr)
 {
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = termbuf[row * winsz.ws_col + col].ch;
+	oldch = termbuf1[row * winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = termbuf[row * winsz.ws_col + col].attr;
+		oattr = termbuf1[row * winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	termbuf[row * winsz.ws_col + col].ch = ch;
-	termbuf[row * winsz.ws_col + col].attr = *attr;
-	dirty_cell(col, row);
+	termbuf1[row * winsz.ws_col + col].ch = ch;
+	termbuf1[row * winsz.ws_col + col].attr = *attr;
+	dirty_cell_slow(col, row);
+}
+
+static void
+set_cell_medium(uint16_t col, uint16_t row, teken_char_t ch,
+    const teken_attr_t *attr)
+{
+	teken_char_t oldch;
+	teken_attr_t oattr;
+
+	oldch = termbuf1[row * winsz.ws_col + col].ch;
+	if (ch == oldch) {
+		oattr = termbuf1[row * winsz.ws_col + col].attr;
+		if (oattr.ta_format == attr->ta_format &&
+		    oattr.ta_fgcolor == attr->ta_fgcolor &&
+		    oattr.ta_bgcolor == attr->ta_bgcolor)
+			return;
+	}
+	termbuf1[row * winsz.ws_col + col].ch = ch;
+	termbuf1[row * winsz.ws_col + col].attr = *attr;
+	dirty_cell_fast(col, row);
+}
+
+static void
+set_cell_fast(uint16_t col, uint16_t row, teken_char_t ch,
+    const teken_attr_t *attr)
+{
+	termbuf1[row * winsz.ws_col + col].ch = ch;
+	termbuf1[row * winsz.ws_col + col].attr = *attr;
+	dirty_cell_fast(col, row);
 }
 
 void
@@ -266,7 +303,7 @@ void
 fbteken_putchar(void *thunk __unused, const teken_pos_t *pos, teken_char_t ch,
     const teken_attr_t *attr)
 {
-	set_cell(pos->tp_col, pos->tp_row, ch, attr);
+	set_cell_slow(pos->tp_col, pos->tp_row, ch, attr);
 }
 
 void
@@ -277,7 +314,7 @@ fbteken_fill(void *thunk __unused, const teken_rect_t *rect, teken_char_t ch,
 
 	for (a = rect->tr_begin.tp_row; a < rect->tr_end.tp_row; a++) {
 		for (b = rect->tr_begin.tp_col; b < rect->tr_end.tp_col; b++) {
-			set_cell(b, a, ch, attr);
+			set_cell_medium(b, a, ch, attr);
 		}
 	}
 }
@@ -301,33 +338,33 @@ fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
 	if (scol < tcol && srow < trow) {
 		for (a = h - 1; a >= 0; a--) {
 			for (b = w - 1; b >= 0; b--) {
-				ch = termbuf[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell(tcol + b, trow + a, ch, attr);
+				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
+				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
+				set_cell_fast(tcol + b, trow + a, ch, attr);
 			}
 		}
 	} else if (scol >= tcol && srow < trow) {
 		for (a = h - 1; a >= 0; a--) {
 			for (b = 0; b < w; b++) {
-				ch = termbuf[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell(tcol + b, trow + a, ch, attr);
+				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
+				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
+				set_cell_fast(tcol + b, trow + a, ch, attr);
 			}
 		}
 	} else if (scol < tcol && srow >= trow) {
 		for (a = 0; a < h; a++) {
 			for (b = w - 1; b >= 0; b--) {
-				ch = termbuf[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell(tcol + b, trow + a, ch, attr);
+				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
+				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
+				set_cell_fast(tcol + b, trow + a, ch, attr);
 			}
 		}
 	} else if (scol >= tcol && srow >= trow) {
 		for (a = 0; a < h; a++) {
 			for (b = 0; b < w; b++) {
-				ch = termbuf[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell(tcol + b, trow + a, ch, attr);
+				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
+				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
+				set_cell_fast(tcol + b, trow + a, ch, attr);
 			}
 		}
 	}
@@ -509,7 +546,7 @@ vtdeconf(void)
 static void
 wait_vblank(void)
 {
-	if (active && dirtycount > 0) {
+	if (active && (dirtyflag || dirtycount > 0)) {
 		drmVBlank req = {
 			.request.type = _DRM_VBLANK_RELATIVE |
 					_DRM_VBLANK_EVENT,
@@ -540,21 +577,22 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	int val;
 	char s[0x1000];
 	teken_pos_t oc;
-	uint32_t prevdirty;
+	uint32_t prevdirty, prevdirtyflag;
 
 	val = read(amaster, s, 0x1000);
 	if (val > 0) {
 		prevdirty = dirtycount;
+		prevdirtyflag = dirtyflag;
 		oc = cursorpos;
 		teken_input(&tek, s, val);
 		if (oc.tp_col != cursorpos.tp_col ||
 		    oc.tp_row != cursorpos.tp_row) {
-			termbuf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
-			termbuf[cursorpos.tp_row * winsz.ws_col + cursorpos.tp_col].cursor = 1;
-			dirty_cell(oc.tp_col, oc.tp_row);
-			dirty_cell(cursorpos.tp_col, cursorpos.tp_row);
+			termbuf1[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
+			termbuf1[cursorpos.tp_row * winsz.ws_col + cursorpos.tp_col].cursor = 1;
+			dirty_cell_slow(oc.tp_col, oc.tp_row);
+			dirty_cell_slow(cursorpos.tp_col, cursorpos.tp_row);
 		}
-		if (prevdirty == 0)
+		if (prevdirty == 0 || prevdirtyflag == 0)
 			wait_vblank();
 	} else {
 		event_base_loopbreak(evbase);
@@ -944,17 +982,43 @@ handle_vblank(int fd __unused, unsigned int sequence __unused,
     unsigned int tv_sec __unused, unsigned int tv_usec __unused,
     void *user_data __unused)
 {
+	struct bufent *tmp;
+	teken_attr_t a, b;
 	int idx;
 	unsigned int i;
 
-	for (i = 0; i < dirtycount; i++) {
-		idx = dirtybuf[i];
-		if (termbuf[idx].dirty) {
-			termbuf[idx].dirty = 0;
-			render_cell(idx % winsz.ws_col, idx / winsz.ws_col);
+	if (dirtyflag) {
+		for (i = 0; i < (unsigned)winsz.ws_col * winsz.ws_row; i++) {
+			a = termbuf1[i].attr;
+			b = termbuf2[i].attr;
+			if (termbuf1[i].ch != termbuf2[i].ch ||
+			    termbuf1[i].cursor != termbuf2[i].cursor ||
+			    a.ta_format != b.ta_format ||
+			    a.ta_fgcolor != b.ta_fgcolor ||
+			    a.ta_bgcolor != b.ta_bgcolor) {
+				termbuf1[i].dirty = 0;
+				render_cell(i % winsz.ws_col,
+				    i / winsz.ws_col);
+			}
 		}
 	}
+	for (i = 0; i < dirtycount; i++) {
+		idx = dirtybuf[i];
+		if (termbuf1[idx].dirty) {
+			termbuf1[idx].dirty = 0;
+			render_cell(idx % winsz.ws_col,
+			    idx / winsz.ws_col);
+		}
+	}
+
+	memcpy(termbuf2, termbuf1,
+	    winsz.ws_col * winsz.ws_row * sizeof(*termbuf1));
+	tmp = termbuf2;
+	termbuf2 = termbuf1;
+	termbuf1 = tmp;
+
 	dirtycount = 0;
+	dirtyflag = 0;
 }
 
 static void
@@ -1372,7 +1436,8 @@ main(int argc, char *argv[])
         winsz.ws_xpixel = winsz.ws_col * fnwidth;
         winsz.ws_ypixel = winsz.ws_row * fnheight;
 	ioctl (amaster, TIOCSWINSZ, &winsz);
-	termbuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
+	termbuf1 = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
+	termbuf2 = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
 	dirtybuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(uint32_t));
 	keypad = 0;
 	showcursor = 1;
@@ -1382,11 +1447,13 @@ main(int argc, char *argv[])
 	for (k = 0; k < width * height; k++)
 		((uint32_t *)plane)[k] = colormap[defattr.ta_bgcolor];
 	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
-		termbuf[i].attr = defattr;
-		termbuf[i].ch = ' ';
-		termbuf[i].cursor = 0;
-		termbuf[i].dirty = 0;
+		termbuf1[i].attr = defattr;
+		termbuf1[i].ch = ' ';
+		termbuf1[i].cursor = 0;
+		termbuf1[i].dirty = 0;
 	}
+	memcpy(termbuf2, termbuf1,
+	    winsz.ws_col * winsz.ws_row * sizeof(*termbuf1));
 
 	struct event *masterev, *ttyev, *drmev, *vtrelev, *vtacqev, *sigintev;
 
@@ -1471,6 +1538,9 @@ main(int argc, char *argv[])
 	if (idleev != NULL)
 		event_free(idleev);
 	event_base_free(evbase);
+
+	free(termbuf1);
+	free(termbuf2);
 
 	drmModeSetCrtc(fd, crtc->crtc_id, oldbuffer_id, 0, 0,
 	    &conn->connector_id, 1, &crtc->mode);
