@@ -977,25 +977,37 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		write(amaster, out, n);
 }
 
+static int
+cmp_cells(int i)
+{
+	teken_attr_t a, b;
+
+	a = termbuf1[i].attr;
+	b = termbuf2[i].attr;
+
+	if (termbuf1[i].ch != termbuf2[i].ch ||
+	    termbuf1[i].cursor != termbuf2[i].cursor ||
+	    a.ta_format != b.ta_format ||
+	    a.ta_fgcolor != b.ta_fgcolor ||
+	    a.ta_bgcolor != b.ta_bgcolor) {
+		return 1;
+	}
+
+	return 0;
+}
+
 static void
 handle_vblank(int fd __unused, unsigned int sequence __unused,
     unsigned int tv_sec __unused, unsigned int tv_usec __unused,
     void *user_data __unused)
 {
 	struct bufent *tmp;
-	teken_attr_t a, b;
 	int idx;
 	unsigned int i;
 
 	if (dirtyflag) {
 		for (i = 0; i < (unsigned)winsz.ws_col * winsz.ws_row; i++) {
-			a = termbuf1[i].attr;
-			b = termbuf2[i].attr;
-			if (termbuf1[i].ch != termbuf2[i].ch ||
-			    termbuf1[i].cursor != termbuf2[i].cursor ||
-			    a.ta_format != b.ta_format ||
-			    a.ta_fgcolor != b.ta_fgcolor ||
-			    a.ta_bgcolor != b.ta_bgcolor) {
+			if (cmp_cells(i)) {
 				termbuf1[i].dirty = 0;
 				render_cell(i % winsz.ws_col,
 				    i / winsz.ws_col);
