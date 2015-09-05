@@ -33,7 +33,7 @@
 .Sh SYNOPSIS
 .Nm fbteken
 .Op Fl a | A
-.Op Fl h
+.Op Fl hw
 .Op Fl d Ar delay
 .Op Fl f Ar fontfile Op Fl F Ar bold_fontfile
 .Op Fl i Ar idle_timeout
@@ -41,6 +41,7 @@
 .Op Fl o Ar kbd_options
 .Op Fl r Ar rate
 .Op Fl s Ar fontsize
+.Op Fl v Ar kbd_variant
 .Sh DESCRIPTION
 The
 .Nm fbteken
@@ -95,14 +96,14 @@ Specifies the keyboard layout (e.g.
 .Li Dq de
 or
 .Li Dq us
-etc.) similarly to the
+etc.) corresponding to the
 .Li XkbLayout
 option in the
 .Xr xorg.conf 5
 configuration file for
 .Xr Xorg 1 .
 .It Fl o Ar kbd_options
-Specifies the keyboard options (similar to the
+Specifies the keyboard options (corresponding to the
 .Li XkbOptions
 setting in
 .Xr xorg.conf 5 ).
@@ -110,6 +111,13 @@ setting in
 Specifies the number of key repeats per second.
 .It Fl s Ar fontsize
 Specifies the font height in pixels.
+.It Fl v Ar kbd_variant
+Specifies the keyboard variant (corresponding to the
+.Li XkbVariant
+setting in
+.Xr xorg.conf 5 ).
+.It Fl w
+Use an alternative color scheme with white background and black foreground.
 .El
 .Sh SEE ALSO
 .Xr drm 4 ,

@@ -163,6 +163,11 @@ teken_attr_t defattr = {
 	ta_fgcolor : TC_WHITE,
 	ta_bgcolor : TC_BLACK,
 };
+teken_attr_t white_defattr = {
+	ta_format : 0,
+	ta_fgcolor : TC_BLACK,
+	ta_bgcolor : TC_WHITE,
+};
 
 struct event_base *evbase;
 
@@ -1129,9 +1134,9 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s [-a | -A] [-d delay] [-r rate] [-f fontfile "
+	    "usage: %s [-a | -A] [-hw] [-d delay] [-r rate] [-f fontfile "
 	    "[-F bold_fontfile]] [-i idle_timeout] [-s fontsize] "
-	    "[-k kbd_layout] [-o kbd_options] [-h]\n", getprogname());
+	    "[-k kbd_layout] [-o kbd_options] [-v kbd_variant]\n", getprogname());
 	exit(1);
 }
 
@@ -1147,6 +1152,7 @@ main(int argc, char *argv[])
 	teken_pos_t winsize;
 	char *normalfont = NULL, *boldfont = NULL;
 	int i, ch;
+	bool whitebg = false;
 
 	unsigned int fontheight = 16;
 	bool alpha = true;
@@ -1208,6 +1214,9 @@ main(int argc, char *argv[])
 			break;
 		case 'v':
 			kbd_variant = optarg;
+			break;
+		case 'w':
+			whitebg = true;
 			break;
 		case 'h':
 		default:
@@ -1279,7 +1288,10 @@ main(int argc, char *argv[])
 		fcntl(amaster, F_SETFL, flags | O_NONBLOCK);
 
 	teken_init(&tek, &tek_funcs, NULL);
-//	teken_set_defattr(&tek, &defattr);
+	if (whitebg)
+		teken_set_defattr(&tek, &white_defattr);
+	else
+		teken_set_defattr(&tek, &defattr);
 
 	/* XXX handle errors (e.g. when invalid font paths are given) */
 	rop = rop32_init(normalfont, boldfont, fontheight,
@@ -1440,10 +1452,12 @@ main(int argc, char *argv[])
 
 	/* Resetting character cells to a default value */
 	uint32_t k;
-	for (k = 0; k < width * height; k++)
-		((uint32_t *)plane)[k] = colormap[defattr.ta_bgcolor];
+	for (k = 0; k < width * height; k++) {
+		((uint32_t *)plane)[k] =
+		    colormap[teken_get_defattr(&tek)->ta_bgcolor];
+	}
 	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
-		termbuf1[i].attr = defattr;
+		termbuf1[i].attr = *teken_get_defattr(&tek);
 		termbuf1[i].ch = ' ';
 		termbuf1[i].cursor = 0;
 		termbuf1[i].dirty = 0;
