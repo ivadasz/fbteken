@@ -32,6 +32,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <err.h>
+#include <errno.h>
 #ifdef __linux__
 #include <pty.h>
 #endif
@@ -148,7 +149,6 @@ uint32_t colormap[TC_NCOLORS * 2] = {
 	[TC_WHITE + TC_NCOLORS] = 0x00ffffff,
 };
 
-/* XXX use double-buffering on termbuf, to better avoid unneeded redrawing */
 /*
  * XXX organize termbuf as a linear array of pointers to rows, to reduce the
  *     cost of scrolling operations.
@@ -568,7 +568,7 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		}
 		if (prevdirty == 0 || prevdirtyflag == 0)
 			wait_vblank();
-	} else {
+	} else if (val == 0 || errno != EAGAIN) {
 		event_base_loopbreak(evbase);
 	}
 }
@@ -618,8 +618,10 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 			n = fbteken_key_get_utf8(repkeycode, out, sizeof(out));
 		}
 		evtimer_add(repeatev, &reprate);
-		if (n > 0)
+		if (n > 0) {
+			/* XXX Make sure we write everything */
 			write(amaster, out, n);
+		}
 	}
 }
 
@@ -947,8 +949,10 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	else if (newrep)
 		evtimer_add(repeatev, &repdelay);
 
-	if (n > 0)
+	if (n > 0) {
+		/* XXX Make sure we write everything */
 		write(amaster, out, n);
+	}
 }
 
 static int
@@ -1267,6 +1271,12 @@ main(int argc, char *argv[])
 		if (execlp(shell, basename(shell), NULL) == -1)
 			err(EXIT_FAILURE, "execlp");
 	}
+
+	int flags = fcntl(amaster, F_GETFL, 0);
+	if (flags == -1)
+		warn("fcntl");
+	else
+		fcntl(amaster, F_SETFL, flags | O_NONBLOCK);
 
 	teken_init(&tek, &tek_funcs, NULL);
 //	teken_set_defattr(&tek, &defattr);
