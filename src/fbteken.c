@@ -276,14 +276,6 @@ set_cell_medium(uint16_t col, uint16_t row, teken_char_t ch,
 	dirty_cell_fast(col, row);
 }
 
-static void
-set_cell_fast(uint16_t col, uint16_t row, teken_char_t ch,
-    const teken_attr_t *attr)
-{
-	termbuf1[row * winsz.ws_col + col].ch = ch;
-	termbuf1[row * winsz.ws_col + col].attr = *attr;
-}
-
 void
 fbteken_bell(void *thunk __unused)
 {
@@ -322,11 +314,9 @@ void
 fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
     const teken_pos_t *pos)
 {
-	int a, b;
+	int a;
 	teken_unit_t w, h;
 	teken_unit_t scol, srow, tcol, trow;
-	teken_attr_t *attr;
-	teken_char_t ch;
 
 	scol = rect->tr_begin.tp_col;
 	srow = rect->tr_begin.tp_row;
@@ -334,37 +324,18 @@ fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
 	trow = pos->tp_row;
 	w = rect->tr_end.tp_col - rect->tr_begin.tp_col;
 	h = rect->tr_end.tp_row - rect->tr_begin.tp_row;
-	if (scol < tcol && srow < trow) {
+
+	if (srow < trow) {
 		for (a = h - 1; a >= 0; a--) {
-			for (b = w - 1; b >= 0; b--) {
-				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell_fast(tcol + b, trow + a, ch, attr);
-			}
+			memmove(&termbuf1[(trow + a) * winsz.ws_col + tcol],
+			    &termbuf1[(srow + a) * winsz.ws_col + scol],
+			    w * sizeof(*termbuf1));
 		}
-	} else if (scol >= tcol && srow < trow) {
-		for (a = h - 1; a >= 0; a--) {
-			for (b = 0; b < w; b++) {
-				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell_fast(tcol + b, trow + a, ch, attr);
-			}
-		}
-	} else if (scol < tcol && srow >= trow) {
+	} else {
 		for (a = 0; a < h; a++) {
-			for (b = w - 1; b >= 0; b--) {
-				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell_fast(tcol + b, trow + a, ch, attr);
-			}
-		}
-	} else if (scol >= tcol && srow >= trow) {
-		for (a = 0; a < h; a++) {
-			for (b = 0; b < w; b++) {
-				ch = termbuf1[(srow + a) * winsz.ws_col + scol + b].ch;
-				attr = &termbuf1[(srow + a) * winsz.ws_col + scol + b].attr;
-				set_cell_fast(tcol + b, trow + a, ch, attr);
-			}
+			memmove(&termbuf1[(trow + a) * winsz.ws_col + tcol],
+			    &termbuf1[(srow + a) * winsz.ws_col + scol],
+			    w * sizeof(*termbuf1));
 		}
 	}
 	dirtyflag = 1;
@@ -584,6 +555,7 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		prevdirty = dirtycount;
 		prevdirtyflag = dirtyflag;
 		oc = cursorpos;
+		termbuf1[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
 		teken_input(&tek, s, val);
 		if (oc.tp_col != cursorpos.tp_col ||
 		    oc.tp_row != cursorpos.tp_row) {
@@ -591,6 +563,8 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 			termbuf1[cursorpos.tp_row * winsz.ws_col + cursorpos.tp_col].cursor = 1;
 			dirty_cell_slow(oc.tp_col, oc.tp_row);
 			dirty_cell_slow(cursorpos.tp_col, cursorpos.tp_row);
+		} else {
+			termbuf1[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 1;
 		}
 		if (prevdirty == 0 || prevdirtyflag == 0)
 			wait_vblank();
