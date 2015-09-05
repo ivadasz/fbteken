@@ -1,6 +1,8 @@
 Depends on libdrm, libevent2, libfreetype2 and libxkbcommon.
 Includes libteken (from the FreeBSD base system) for the actual terminal
 emulation.
+By default it additionally expects to find the x11-fonts/dejavu font files
+(but font file can be overridden with the -f option if necessary).
 
 Only tested on DragonFly BSD so far, but it's likely that everything
 builds and works with minor adjustments on FreeBSD.
@@ -13,13 +15,11 @@ on Linux.
 
 TODO
 
-Write a manpage.
-
 Needs more error handling.
 
 Improve performance of the terminal emulation. Especially the fbteken_copy
-operation needs optimizing, e.g. by optimizing the layout of the terminal-cell
-buffer, or by optimizing away unneeded terminal operations..
+operation still needs some optimizing, e.g. by optimizing the layout of the
+terminal-cell buffer, or by optimizing away unneeded terminal operations..
 
 Keycode translation is currently tailored towards ISO and ANSI keyboard
 layouts. Special keys from e.g. japanese keyboards aren't handled yet.
