@@ -1164,7 +1164,7 @@ main(int argc, char *argv[])
 	unsigned int repeat_rate = 30;
 
 	/* XXX handle bitmap fonts better */
-	while ((ch = getopt(argc, argv, "aAd:r:f:F:i:k:o:v:s:h")) != -1) {
+	while ((ch = getopt(argc, argv, "aAhwd:r:f:F:i:k:o:v:s:")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
