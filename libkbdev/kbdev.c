@@ -33,9 +33,9 @@
 #include <errno.h>
 #include <unistd.h>
 
-#include "kbd.h"
+#include "kbdev.h"
 
-struct kbd_state {
+struct kbdev_state {
 	int kbdfd;
 
 	uint8_t lastread_code;
@@ -45,15 +45,15 @@ struct kbd_state {
 	int npressed;
 };
 
-static struct kbd_event atcode_to_event(uint8_t atcode);
-static int ispressed(struct kbd_state *state, uint8_t code);
-static void press(struct kbd_state *state, uint8_t code);
-static void release(struct kbd_state *state, uint8_t code);
+static struct kbdev_event atcode_to_event(uint8_t atcode);
+static int ispressed(struct kbdev_state *state, uint8_t code);
+static void press(struct kbdev_state *state, uint8_t code);
+static void release(struct kbdev_state *state, uint8_t code);
 
-static struct kbd_event
+static struct kbdev_event
 atcode_to_event(uint8_t atcode)
 {
-	struct kbd_event ev;
+	struct kbdev_event ev;
 	int code;
 
 	if ((atcode & 0x7f) <= 0x58) {
@@ -99,7 +99,7 @@ atcode_to_event(uint8_t atcode)
 }
 
 static int
-ispressed(struct kbd_state *state, uint8_t code)
+ispressed(struct kbdev_state *state, uint8_t code)
 {
 	int i;
 
@@ -111,7 +111,7 @@ ispressed(struct kbd_state *state, uint8_t code)
 }
 
 static void
-press(struct kbd_state *state, uint8_t code)
+press(struct kbdev_state *state, uint8_t code)
 {
 	if (!ispressed(state, code)) {
 		state->pressed[state->npressed] = code;
@@ -120,7 +120,7 @@ press(struct kbd_state *state, uint8_t code)
 }
 
 static void
-release(struct kbd_state *state, uint8_t code)
+release(struct kbdev_state *state, uint8_t code)
 {
 	int i;
 
@@ -134,21 +134,21 @@ release(struct kbd_state *state, uint8_t code)
 }
 
 int
-kbd_set_leds(struct kbd_state *state, int mask)
+kbdev_set_leds(struct kbdev_state *state, int mask)
 {
 	return ioctl(state->kbdfd, KDSETLED, mask);
 }
 
 int
-kbd_get_leds(struct kbd_state *state, int *mask)
+kbdev_get_leds(struct kbdev_state *state, int *mask)
 {
 	return ioctl(state->kbdfd, KDGETLED, &mask);
 }
 
-struct kbd_state *
-kbd_new_state(int fd)
+struct kbdev_state *
+kbdev_new_state(int fd)
 {
-	struct kbd_state *state;
+	struct kbdev_state *state;
 
 	state = calloc(1, sizeof(*state));
 	if (state == NULL)
@@ -165,7 +165,7 @@ kbd_new_state(int fd)
 }
 
 void
-kbd_destroy_state(struct kbd_state *state)
+kbdev_destroy_state(struct kbdev_state *state)
 {
 	if (ioctl(state->kbdfd, KDSKBMODE, K_XLATE) != 0) {
 		warn("KDSKBMODE");
@@ -174,7 +174,7 @@ kbd_destroy_state(struct kbd_state *state)
 }
 
 void
-kbd_reset_state(struct kbd_state *state)
+kbdev_reset_state(struct kbdev_state *state)
 {
 	state->lastread_code = 0;
 	state->npressed = 0;
@@ -182,15 +182,15 @@ kbd_reset_state(struct kbd_state *state)
 
 /* Returns -1 on error, 0 on end-of-file, number-of-events read otherwise */
 int
-kbd_read_events(struct kbd_state *state, struct kbd_event *out, int count)
+kbdev_read_events(struct kbdev_state *state, struct kbdev_event *out, int cnt)
 {
 	uint8_t buf[128];
-	struct kbd_event ev;
+	struct kbdev_event ev;
 	int n = 0, val, i;
 
-	while (n < count) {
+	while (n < cnt) {
 		val = read(state->kbdfd, buf,
-		    MIN((unsigned)count - n, sizeof(buf)));
+		    MIN((unsigned)cnt - n, sizeof(buf)));
 		if (val == 0) {
 			return n;
 		} else if (val < 0) {

@@ -61,7 +61,7 @@
 
 #include "fbdraw.h"
 #include "../libteken/teken.h"
-#include "kbd.h"
+#include "kbdev.h"
 
 struct bufent {
 	teken_char_t ch;
@@ -86,7 +86,7 @@ static void	setdpms(int level);
 int ttyfd;
 int drmfd;
 
-struct kbd_state *kbdst;
+struct kbdev_state *kbdst;
 
 struct xkb_context *ctx;
 struct xkb_keymap *keymap;
@@ -184,7 +184,7 @@ update_kbd_leds(void)
 	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_SCROLL))
 		ledstate |= (1 << 2);
 
-	kbd_set_leds(kbdst, ledstate);
+	kbdev_set_leds(kbdst, ledstate);
 }
 
 static void
@@ -504,9 +504,9 @@ vtconfigure(void)
 	set_nonblocking(fd);
 
 	/* Initialize Keyboard stuff */
-	kbdst = kbd_new_state(fd);
+	kbdst = kbdev_new_state(fd);
 	if (kbdst == NULL)
-		warn("kbd_new_state");
+		warn("kbdev_new_state");
 }
 
 static void
@@ -544,7 +544,7 @@ vtdeconf(void)
 		}
 	}
 #endif
-	kbd_destroy_state(kbdst);
+	kbdev_destroy_state(kbdst);
 	kbdst = NULL;
 
 	close(fd);
@@ -825,9 +825,9 @@ static void
 ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
 	int val;
-	struct kbd_event evs[64];
+	struct kbdev_event evs[64];
 
-	val = kbd_read_events(kbdst, evs, NELEM(evs));
+	val = kbdev_read_events(kbdst, evs, NELEM(evs));
 	if (val == 0) {
 		return;
 	} else if (val == -1) {
@@ -969,7 +969,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	repkeysym = 0;
 	evtimer_del(repeatev);
 	event_del(idleev);
-	kbd_reset_state(kbdst);
+	kbdev_reset_state(kbdst);
 	xkb_state_unref(state);
 	state = NULL;
 	state = xkb_state_new(keymap);

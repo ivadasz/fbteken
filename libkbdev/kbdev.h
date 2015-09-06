@@ -23,18 +23,24 @@
  * SUCH DAMAGE.
  */
 
-struct kbd_state;
+#ifndef _KBDEV_H_
+#define _KBDEV_H_
 
-struct kbd_event {
+struct kbdev_state;
+
+struct kbdev_event {
 	int keycode;	/* evdev compatible */
 	int pressed;	/* 0 -> key released; 1 -> key pressed */
 };
 
-int kbd_set_leds(struct kbd_state *state, int mask);
-int kbd_get_leds(struct kbd_state *state, int *mask);
-struct kbd_state *kbd_new_state(int fd);
-void kbd_destroy_state(struct kbd_state *state);
-void kbd_reset_state(struct kbd_state *state);
+int kbdev_set_leds(struct kbdev_state *state, int mask);
+int kbdev_get_leds(struct kbdev_state *state, int *mask);
+struct kbdev_state *kbdev_new_state(int fd);
+void kbdev_destroy_state(struct kbdev_state *state);
+void kbdev_reset_state(struct kbdev_state *state);
 
 /* The fd needs to be set to non-blocking before calling this function */
-int kbd_read_events(struct kbd_state *state, struct kbd_event *out, int count);
+int kbdev_read_events(struct kbdev_state *state, struct kbdev_event *out,
+		      int cnt);
+
+#endif /* !_KBDEV_H_ */
