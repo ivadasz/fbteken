@@ -1,5 +1,5 @@
 PROG=	fbteken
-SRCS=	fbteken.c rop32.c
+SRCS=	fbteken.c rop32.c dragonfly_kbd.c
 HDRS=	fbdraw.h
 
 .if exists(${.OBJDIR}/../libteken)

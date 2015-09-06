@@ -64,6 +64,7 @@
 
 #include "fbdraw.h"
 #include "../libteken/teken.h"
+#include "kbd.h"
 
 struct bufent {
 	teken_char_t ch;
@@ -87,6 +88,8 @@ static void	setdpms(int level);
 
 int ttyfd;
 int drmfd;
+
+struct kbd_state *kbdst;
 
 struct xkb_context *ctx;
 struct xkb_keymap *keymap;
@@ -178,14 +181,13 @@ update_kbd_leds(void)
 	int ledstate = 0;
 
 	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_CAPS))
-		ledstate |= CLKED;
+		ledstate |= (1 << 0);
 	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_NUM))
-		ledstate |= NLKED;
+		ledstate |= (1 << 1);
 	if (xkb_state_led_name_is_active(state, XKB_LED_NAME_SCROLL))
-		ledstate |= SLKED;
+		ledstate |= (1 << 2);
 
-	if (ioctl(ttyfd, KDSETLED, ledstate) != 0)
-		warn("KDSETLED");
+	kbd_set_leds(kbdst, ledstate);
 }
 
 static void
@@ -488,11 +490,10 @@ vtconfigure(void)
 	cfmakeraw(&tios);
 	tcsetattr(fd, TCSAFLUSH, &tios);
 
-	/* Setting Keyboard mode */
-#ifndef __linux__
-	if (ioctl(fd, KDSKBMODE, K_CODE) != 0)
-		warnx("KDSKBMODE failed");
-#endif
+	/* Initialize Keyboard stuff */
+	kbdst = kbd_new_state(fd);
+	if (kbdst == NULL)
+		warn("kbd_new_state");
 }
 
 static void
@@ -529,9 +530,9 @@ vtdeconf(void)
 			}
 		}
 	}
-	if (ioctl(fd, KDSKBMODE, K_XLATE) != 0)
-		warnx("KDSKBMODE failed");
 #endif
+	kbd_destroy_state(kbdst);
+	kbdst = NULL;
 
 	close(fd);
 }
@@ -646,62 +647,6 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 			write(amaster, out, n);
 		}
 	}
-}
-
-static xkb_keycode_t
-at_toxkb(uint8_t atcode)
-{
-	xkb_keycode_t xkc;
-
-	if ((atcode & 0x7f) <= 0x58) {
-		xkc = (atcode & 0x7f);
-	} else {
-		/*
-		 * Translate keycodes as in sys/dev/misc/kbd/atkbd.c
-		 * from DragonFly to evdev key values.
-		 */
-		xkb_keycode_t code_to_key[128] = {
-			[0x54] = 99,	/* sysrq */
-			[0x59] = 96,	/* right enter key */
-			[0x5a] = 97,	/* right ctrl key */
-			[0x5b] = 98,	/* keypad divide key */
-			[0x5c] = 210,	/* print scrn key */
-			[0x5d] = 100,	/* right alt key */
-			[0x5e] = 102,	/* grey home key */
-			[0x5f] = 103,	/* grey up arrow key */
-			[0x60] = 104,	/* grey page up key */
-			[0x61] = 105,	/* grey left arrow key */
-			[0x62] = 106,	/* grey right arrow key */
-			[0x63] = 107,	/* grey end key */
-			[0x64] = 108,	/* grey down arrow key */
-			[0x65] = 109,	/* grey page down key */
-			[0x66] = 110,	/* grey insert key */
-			[0x67] = 111,	/* grey delete key */
-			[0x68] = 119,	/* pause */
-			[0x69] = 125,	/* left Window key */
-			[0x6a] = 126,	/* right Window key */
-			[0x6b] = 139,	/* menu key */
-			[0x6c] = 0x19b,	/* break (??) */
-		};
-		xkc = code_to_key[atcode & 0x7f];
-	}
-	/* Fixes e.g. the '<' key which lies between 0x50 and 0x58 */
-	if (xkc == 0)
-		xkc = (atcode & 0x7f);
-
-	if (xkc > 0)
-		return xkc + 8;
-	else
-		return 0;
-}
-
-static int
-at_ispress(uint8_t atcode)
-{
-	if (atcode & 0x80)
-		return 0;
-	else
-		return 1;
 }
 
 /* Keep track of keys for vt switching */
@@ -862,54 +807,14 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 	return fbteken_key_get_utf8(code, buf, len);
 }
 
-/* Just track all keys for now, to avoid stuck modifiers */
-uint8_t pressed[256];
-int npressed = 0;
-
-static int
-ispressed(uint8_t code)
-{
-	int i;
-
-	for (i = 0; i < npressed; i++)
-		if (pressed[i] == code)
-			return 1;
-
-	return 0;
-}
-
-static void
-press(uint8_t code)
-{
-	if (!ispressed(code)) {
-		pressed[npressed] = code;
-		npressed++;
-	}
-}
-
-static void
-release(uint8_t code)
-{
-	int i;
-
-	for (i = 0; i < npressed; i++) {
-		if (pressed[i] == code) {
-			npressed--;
-			memcpy(&pressed[i], &pressed[i+1], npressed-i);
-		}
-	}
-}
-
-uint8_t lastread_code = 0;
-
 /* Reading keyboard input from the tty which was set into raw mode */
 static void
 ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 {
 	int val;
-	uint8_t buf[128];
+	struct kbd_event evs[64];
 
-	val = read(ttyfd, buf, sizeof(buf));
+	val = kbd_read_events(kbdst, evs, NELEM(evs));
 	if (val == 0) {
 		return;
 	} else if (val == -1) {
@@ -925,50 +830,37 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	int i, n = 0;
 
 	for (i = 0; i < val; i++) {
-		keycode = at_toxkb(buf[i]);
-		if (keycode == 0) {
-			warnx("ignoring atscancode 0x%02x", buf[i]);
+		keycode = evs[i].keycode + 8;
+		if (keycode == 0)
 			continue;
-		}
 
 		keysym = xkb_state_key_get_one_sym(state, keycode);
-		if (keycode == repkeycode && !at_ispress(buf[i])) {
+		if (keycode == repkeycode && !evs[i].pressed) {
 			repkeycode = 0;
 			repkeysym = 0;
 		}
 		if (xkb_keymap_key_repeats(keymap, keycode) &&
-		    keycode != repkeycode && at_ispress(buf[i])) {
+		    keycode != repkeycode && evs[i].pressed) {
 			repkeycode = keycode;
 			repkeysym = keysym;
 			newrep = 1;
 		}
 
-		if (lastread_code == buf[i] && at_ispress(buf[i]))
-			continue;
-
-		char name[10];
-		xkb_keysym_get_name(keysym, name, 10);
 #if 0
+		char name[32];
+		xkb_keysym_get_name(keysym, name, sizeof(name));
 		printf("scancode=0x%02x keycode=0x%02x keysym=%s\n",
 		    buf[i], keycode, name);
 #endif
-		if (at_ispress(buf[i])) {
+		if (evs[i].pressed) {
 			n += handle_keypress(keycode, keysym, &out[n],
 			    sizeof(out) - n);
 		}
-		if (!(at_ispress(buf[i]) && ispressed(buf[i] & 0x7f))) {
-			stcomp = xkb_state_update_key(state, keycode,
-			    at_ispress(buf[i]) ? XKB_KEY_DOWN : XKB_KEY_UP);
-			if (stcomp & XKB_STATE_LEDS) {
-				update_kbd_leds();
-			}
+		stcomp = xkb_state_update_key(state, keycode,
+		    evs[i].pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+		if (stcomp & XKB_STATE_LEDS) {
+			update_kbd_leds();
 		}
-		if (at_ispress(buf[i]))
-			press(buf[i] & 0x7f);
-		else
-			release(buf[i] & 0x7f);
-
-		lastread_code = buf[i];
 	}
 
 	if (repkeycode == 0)
@@ -1060,12 +952,11 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	printf("vtleave\n");
 
 	setdpms(DRM_MODE_DPMS_ON);
-	lastread_code = 0;
 	repkeycode = 0;
 	repkeysym = 0;
 	evtimer_del(repeatev);
 	event_del(idleev);
-	npressed = 0;
+	kbd_reset_state(kbdst);
 	xkb_state_unref(state);
 	state = NULL;
 	state = xkb_state_new(keymap);
