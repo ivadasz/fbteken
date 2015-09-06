@@ -40,16 +40,13 @@
 #include <libutil.h>
 #include <pthread.h>
 #include <termios.h>
-#include <poll.h>
 
 #include <sys/param.h>
 #ifdef __linux__
 #include <linux/vt.h>
 #else
 #include <sys/ioctl.h>
-#include <sys/mman.h>
 #include <sys/consio.h>
-#include <sys/kbio.h>
 #endif
 
 #include <libkms/libkms.h>
