@@ -561,7 +561,8 @@ handleidle(evutil_socket_t fd __unused, short events __unused,
 {
 	setdpms(DRM_MODE_DPMS_SUSPEND);
 
-	event_add(idleev, &idletv);
+	if (active)
+		event_add(idleev, &idletv);
 }
 
 static void
@@ -835,7 +836,7 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 	int cnt = 0, switchvt;
 
 	/* Reset idle timeout */
-	if (idleev != NULL)
+	if (idleev != NULL && active)
 		event_add(idleev, &idletv);
 
 	if (sym == XKB_KEY_Print) {
@@ -1063,6 +1064,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	repkeycode = 0;
 	repkeysym = 0;
 	evtimer_del(repeatev);
+	event_del(idleev);
 	npressed = 0;
 	xkb_state_unref(state);
 	state = NULL;
@@ -1092,6 +1094,7 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, drmfbid, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	active = true;
+	event_add(idleev, &idletv);
 
 	wait_vblank();
 }
@@ -1537,7 +1540,7 @@ main(int argc, char *argv[])
 	sigintev = evsignal_new(evbase, SIGINT, handleterm, NULL);
 	event_priority_set(sigintev, 0);
 
-	if (idleev != NULL)
+	if (idleev != NULL && active)
 		event_add(idleev, &idletv);
 	event_add(masterev, NULL);
 	event_add(ttyev, NULL);
