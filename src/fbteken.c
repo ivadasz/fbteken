@@ -395,6 +395,20 @@ fbteken_respond(void *thunk __unused, const void *arg __unused,
 }
 
 static void
+set_nonblocking(int fd)
+{
+	int flags;
+
+	flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1) {
+		warn("fcntl");
+		return;
+	}
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+		warn("fcntl");
+}
+
+static void
 vtconfigure(void)
 {
 	int fd, ret;
@@ -487,11 +501,7 @@ vtconfigure(void)
 	cfmakeraw(&tios);
 	tcsetattr(fd, TCSAFLUSH, &tios);
 
-	int flags = fcntl(fd, F_GETFL, 0);
-	if (flags == -1)
-		warn("fcntl");
-	else
-		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+	set_nonblocking(fd);
 
 	/* Initialize Keyboard stuff */
 	kbdst = kbd_new_state(fd);
@@ -1200,11 +1210,7 @@ main(int argc, char *argv[])
 			err(EXIT_FAILURE, "execlp");
 	}
 
-	int flags = fcntl(amaster, F_GETFL, 0);
-	if (flags == -1)
-		warn("fcntl");
-	else
-		fcntl(amaster, F_SETFL, flags | O_NONBLOCK);
+	set_nonblocking(amaster);
 
 	teken_init(&tek, &tek_funcs, NULL);
 	if (whitebg)

@@ -35,4 +35,6 @@ int kbd_get_leds(struct kbd_state *state, int *mask);
 struct kbd_state *kbd_new_state(int fd);
 void kbd_destroy_state(struct kbd_state *state);
 void kbd_reset_state(struct kbd_state *state);
+
+/* The fd needs to be set to non-blocking before calling this function */
 int kbd_read_events(struct kbd_state *state, struct kbd_event *out, int count);
