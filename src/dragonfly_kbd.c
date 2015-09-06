@@ -202,7 +202,7 @@ kbd_read_events(struct kbd_state *state, struct kbd_event *out, int count)
 
 		for (i = 0; i < val; i++) {
 			if (state->lastread_code == buf[i] &&
-			    (buf[i] & 0x80)) {
+			    !(buf[i] & 0x80)) {
 				continue;
 			}
 
@@ -216,7 +216,7 @@ kbd_read_events(struct kbd_state *state, struct kbd_event *out, int count)
 			 * XXX Debug this issue
 			 *     (might be Latitude E5450 specific)
 			 */
-			if ((buf[i] & 0x80) && ispressed(state, buf[i] & 0x7f))
+			if (ev.pressed && ispressed(state, buf[i] & 0x7f))
 				warnx("atcode 0x%02x keycode 0x%02x was "
 				    "already pressed", buf[i], ev.keycode);
 

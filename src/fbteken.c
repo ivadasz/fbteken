@@ -490,6 +490,12 @@ vtconfigure(void)
 	cfmakeraw(&tios);
 	tcsetattr(fd, TCSAFLUSH, &tios);
 
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1)
+		warn("fcntl");
+	else
+		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
 	/* Initialize Keyboard stuff */
 	kbdst = kbd_new_state(fd);
 	if (kbdst == NULL)
