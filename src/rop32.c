@@ -117,9 +117,9 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height,
     bool alpha)
 {
 	struct rop_obj *self;
-	char default_fp[] = "/usr/X11R7/lib/X11/fonts/TTF/VeraMono.ttf";
+	char default_fp[] = "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
 	char default_boldfp[] =
-	    "/usr/X11R7/lib/X11/fonts/TTF/VeraMono-Bold.ttf";
+	    "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
 
 	self = calloc(1, sizeof(struct rop_obj));
 	if (self == NULL) {
@@ -138,7 +138,7 @@ rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height,
 
 	self->fid.file_path = fp;
 	self->fid.face_index = 0;
-	self->boldfid.file_path = NULL;
+	self->boldfid.file_path = boldfp;
 	self->boldfid.face_index = 0;
 	error = FT_Init_FreeType(&self->library);
 	if (error) {
