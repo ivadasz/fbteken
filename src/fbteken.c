@@ -444,7 +444,7 @@ vtconfigure(void)
 	vtnum = vtno;
 	close(fd);
 
-	snprintf(vtname, sizeof(vtname), "/dev/ttyv%01x", vtno -1);
+	snprintf(vtname, sizeof(vtname), "/dev/ttyv%01x", vtno - 1);
 
 	fd = open(vtname, O_RDWR);
 	if(fd < 0) {
@@ -968,7 +968,8 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	repkeycode = 0;
 	repkeysym = 0;
 	evtimer_del(repeatev);
-	event_del(idleev);
+	if (idleev != NULL)
+		event_del(idleev);
 	kbdev_reset_state(kbdst);
 	xkb_state_unref(state);
 	state = NULL;
@@ -998,7 +999,8 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, drmfbid, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	active = true;
-	event_add(idleev, &idletv);
+	if (idleev != NULL)
+		event_add(idleev, &idletv);
 
 	wait_vblank();
 }
