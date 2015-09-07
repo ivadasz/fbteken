@@ -94,15 +94,19 @@ struct xkb_state *state;
 
 int idle_timeout = 0;	/* idle timeout (in s) */
 
-struct kms_driver *kms;
-struct kms_bo *bo;
-unsigned handles[4], pitches[4], offsets[4];
-void *plane;
-uint32_t fb_id;
-drmModeCrtcPtr drmcrtc;
-drmModeConnectorPtr drmconn;
-int drmfbid;
-int oldbuffer_id;
+struct drm_state {
+	struct kms_driver *kms;
+	struct kms_bo *bo;
+	unsigned handles[4], pitches[4], offsets[4];
+	void *plane;
+	uint32_t fb_id;
+	drmModeCrtcPtr crtc;
+	drmModeConnectorPtr conn;
+	int oldbuffer_id;
+};
+
+struct drm_state gfxstate;
+
 int vtnum;
 #ifndef __linux__
 int initialvtnum;
@@ -754,8 +758,6 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 	return 0;
 }
 
-drmModeConnectorPtr conn = NULL;
-
 static void
 setdpms(int level)
 {
@@ -767,8 +769,8 @@ setdpms(int level)
 	if (level == mode)
 		return;
 
-	for (i = 0; i < conn->count_props; i++) {
-		props = drmModeGetProperty(drmfd, conn->props[i]);
+	for (i = 0; i < gfxstate.conn->count_props; i++) {
+		props = drmModeGetProperty(drmfd, gfxstate.conn->props[i]);
 		if (props == NULL)
 			continue;
 
@@ -782,7 +784,7 @@ setdpms(int level)
 	if (prop == NULL)
 		return;
 
-	drmModeConnectorSetProperty(drmfd, conn->connector_id, prop->prop_id,
+	drmModeConnectorSetProperty(drmfd, gfxstate.conn->connector_id, prop->prop_id,
 	    level);
 	drmModeFreeProperty(prop);
 	mode = level;
@@ -978,7 +980,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 		errx(1, "xkb_state_new failed");
 	update_kbd_leds();
 
-	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, oldbuffer_id, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
+	if (drmModeSetCrtc(drmfd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	if (drmDropMaster(drmfd) != 0)
 		perror("drmDropMaster");
@@ -996,7 +998,7 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
 	if (drmSetMaster(drmfd) != 0)
 		perror("drmSetMaster");
-	if (drmModeSetCrtc(drmfd, drmcrtc->crtc_id, drmfbid, 0, 0, &drmconn->connector_id, 1, &drmcrtc->mode) != 0)
+	if (drmModeSetCrtc(drmfd, gfxstate.crtc->crtc_id, gfxstate.fb_id, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	active = true;
 	if (idleev != NULL)
@@ -1077,7 +1079,6 @@ main(int argc, char *argv[])
 	int fd;
 	uint32_t width, height;
 	drmModeResPtr res;
-	drmModeCrtcPtr crtc;
 	drmModeEncoderPtr enc;
 	char *shell;
 	teken_pos_t winsize;
@@ -1250,32 +1251,32 @@ main(int argc, char *argv[])
 
 	/* First take the first display output which is connected */
 	for (i = 0; i < res->count_connectors; ++i) {
-		conn = drmModeGetConnector(fd, res->connectors[i]);
-		if(conn->connection == DRM_MODE_CONNECTED)
+		gfxstate.conn = drmModeGetConnector(fd, res->connectors[i]);
+		if(gfxstate.conn->connection == DRM_MODE_CONNECTED)
 			break;
 	}
 	if (res->count_connectors <= 0)
 		errx(1, "No Monitor connected");
 #if 0
-	printf("conn->mmWidth: %u\n", conn->mmWidth);
-	printf("conn->mmHeight: %u\n", conn->mmHeight);
-	printf("conn->connector_id = %u\n", conn->connector_id);
-	printf("conn->encoder_id = %u\n", conn->encoder_id);
-	printf("conn->connector_type = %u\n", conn->connector_type);
-	printf("conn->connector_type_id = %u\n", conn->connector_type_id);
-	printf("conn->count_modes = %u\n", conn->count_modes);
-	printf("conn->count_props = %u\n", conn->count_props);
-	printf("conn->count_encoders = %u\n", conn->count_encoders);
-	for (i = 0; i < conn->count_encoders; i++)
-		printf("conn->encoders[%d] = %u\n", i, conn->encoders[i]);
+	printf("gfxstate.conn->mmWidth: %u\n", gfxstate.conn->mmWidth);
+	printf("gfxstate.conn->mmHeight: %u\n", gfxstate.conn->mmHeight);
+	printf("gfxstate.conn->connector_id = %u\n", gfxstate.conn->connector_id);
+	printf("gfxstate.conn->encoder_id = %u\n", gfxstate.conn->encoder_id);
+	printf("gfxstate.conn->connector_type = %u\n", gfxstate.conn->connector_type);
+	printf("gfxstate.conn->connector_type_id = %u\n", gfxstate.conn->connector_type_id);
+	printf("gfxstate.conn->count_modes = %u\n", gfxstate.conn->count_modes);
+	printf("gfxstate.conn->count_props = %u\n", gfxstate.conn->count_props);
+	printf("gfxstate.conn->count_encoders = %u\n", gfxstate.conn->count_encoders);
+	for (i = 0; i < gfxstate.conn->count_encoders; i++)
+		printf("gfxstate.conn->encoders[%d] = %u\n", i, gfxstate.conn->encoders[i]);
 #endif
 
-	/* Using only the first encoder in conn->encoders for now */
-	if (conn->count_encoders == 0)
-		errx(1, "No encoders on this conection: conn->count_encoders == 0\n");
-	else if (conn->count_encoders > 1)
-		printf("Using the first encoder in conn->encoders\n");
-	enc = drmModeGetEncoder(fd, conn->encoders[0]);
+	/* Using only the first encoder in gfxstate.conn->encoders for now */
+	if (gfxstate.conn->count_encoders == 0)
+		errx(1, "No encoders on this conection: gfxstate.conn->count_encoders == 0\n");
+	else if (gfxstate.conn->count_encoders > 1)
+		printf("Using the first encoder in gfxstate.conn->encoders\n");
+	enc = drmModeGetEncoder(fd, gfxstate.conn->encoders[0]);
 #if 0
 	printf("enc->encoder_id = %u\n", enc->encoder_id);
 	printf("enc->encoder_type = %u\n", enc->encoder_type);
@@ -1290,49 +1291,49 @@ main(int argc, char *argv[])
 	 */
 	for (i = 0; i < MAX(32, res->count_crtcs); i++) {
 		if (enc->possible_crtcs & (1U << i)) {
-			crtc = drmModeGetCrtc(fd, res->crtcs[i]);
-			if (crtc != NULL)
+			gfxstate.crtc = drmModeGetCrtc(fd, res->crtcs[i]);
+			if (gfxstate.crtc != NULL)
 				break;
 		}
 	}
 	if (i == res->count_crtcs)
 		errx(1, "No usable crtc found in enc->possible_crtcs\n");
 #if 0
-	printf("crtc->crtc_id = %u\n", crtc->crtc_id);
-	printf("crtc->buffer_id = %u\n", crtc->buffer_id);
-	printf("crtc->width/height = %ux%u\n", crtc->width, crtc->height);
-	printf("crtc->mode_valid = %u\n", crtc->mode_valid);
-	printf("x: %u, y: %u\n", crtc->x, crtc->y);
+	printf("gfxstate.crtc->crtc_id = %u\n", gfxstate.crtc->crtc_id);
+	printf("gfxstate.crtc->buffer_id = %u\n", gfxstate.crtc->buffer_id);
+	printf("gfxstate.crtc->width/height = %ux%u\n", gfxstate.crtc->width, gfxstate.crtc->height);
+	printf("gfxstate.crtc->mode_valid = %u\n", gfxstate.crtc->mode_valid);
+	printf("x: %u, y: %u\n", crtc->x, gfxstate.crtc->y);
 #endif
-	oldbuffer_id = crtc->buffer_id;
+	gfxstate.oldbuffer_id = gfxstate.crtc->buffer_id;
 
-	/* Just use the first display mode given in conn->modes */
+	/* Just use the first display mode given in gfxstate.conn->modes */
 	/* XXX Allow the user to override the mode via a commandline argument */
-	if (conn->count_modes == 0)
-		errx(1, "No display mode specified in conn->modes\n");
-	crtc->mode = conn->modes[0];
+	if (gfxstate.conn->count_modes == 0)
+		errx(1, "No display mode specified in gfxstate.conn->modes\n");
+	gfxstate.crtc->mode = gfxstate.conn->modes[0];
 #if 0
 	printf("Display mode:\n");
-	printf("clock: %u\n", crtc->mode.clock);
-	printf("vrefresh: %u\n", crtc->mode.vrefresh);
-	printf("hdisplay: %u\n", crtc->mode.hdisplay);
-	printf("hsync_start: %u\n", crtc->mode.hsync_start);
-	printf("hsync_end: %u\n", crtc->mode.hsync_end);
-	printf("htotal: %u\n", crtc->mode.htotal);
-	printf("hskew: %u\n", crtc->mode.hskew);
-	printf("vdisplay: %u\n", crtc->mode.vdisplay);
-	printf("vsync_start: %u\n", crtc->mode.vsync_start);
-	printf("vsync_end: %u\n", crtc->mode.vsync_end);
-	printf("vtotal: %u\n", crtc->mode.vtotal);
-	printf("vscan: %u\n", crtc->mode.vscan);
-	printf("flags: %u\n", crtc->mode.flags);
-	printf("type: %u\n", crtc->mode.type);
+	printf("clock: %u\n", gfxstate.crtc->mode.clock);
+	printf("vrefresh: %u\n", gfxstate.crtc->mode.vrefresh);
+	printf("hdisplay: %u\n", gfxstate.crtc->mode.hdisplay);
+	printf("hsync_start: %u\n", gfxstate.crtc->mode.hsync_start);
+	printf("hsync_end: %u\n", gfxstate.crtc->mode.hsync_end);
+	printf("htotal: %u\n", gfxstate.crtc->mode.htotal);
+	printf("hskew: %u\n", gfxstate.crtc->mode.hskew);
+	printf("vdisplay: %u\n", gfxstate.crtc->mode.vdisplay);
+	printf("vsync_start: %u\n", gfxstate.crtc->mode.vsync_start);
+	printf("vsync_end: %u\n", gfxstate.crtc->mode.vsync_end);
+	printf("vtotal: %u\n", gfxstate.crtc->mode.vtotal);
+	printf("vscan: %u\n", gfxstate.crtc->mode.vscan);
+	printf("flags: %u\n", gfxstate.crtc->mode.flags);
+	printf("type: %u\n", gfxstate.crtc->mode.type);
 #endif
 
-	width = crtc->mode.hdisplay;
-	height = crtc->mode.vdisplay;
+	width = gfxstate.crtc->mode.hdisplay;
+	height = gfxstate.crtc->mode.vdisplay;
 
-	kms_create(fd, &kms);
+	kms_create(fd, &gfxstate.kms);
 
 	unsigned bo_attribs[] = {
 		KMS_WIDTH,	width,
@@ -1340,26 +1341,23 @@ main(int argc, char *argv[])
 		KMS_BO_TYPE,	KMS_BO_TYPE_SCANOUT_X8R8G8B8,
 		KMS_TERMINATE_PROP_LIST
 	};
-	kms_bo_create(kms, bo_attribs, &bo);
-	kms_bo_get_prop(bo, KMS_HANDLE, &handles[0]);
-	kms_bo_get_prop(bo, KMS_PITCH, &pitches[0]);
+	kms_bo_create(gfxstate.kms, bo_attribs, &gfxstate.bo);
+	kms_bo_get_prop(gfxstate.bo, KMS_HANDLE, &gfxstate.handles[0]);
+	kms_bo_get_prop(gfxstate.bo, KMS_PITCH, &gfxstate.pitches[0]);
 #if 0
-	printf("pitches[0] = %u\n", pitches[0]);
-	printf("handles[0] = %u\n", handles[0]);
+	printf("gfxstate.pitches[0] = %u\n", gfxstate.pitches[0]);
+	printf("gfxstate.handles[0] = %u\n", gfxstate.handles[0]);
 #endif
-	offsets[0] = 0;
-	kms_bo_map(bo, &plane);
+	gfxstate.offsets[0] = 0;
+	kms_bo_map(gfxstate.bo, &gfxstate.plane);
 	rop32_setclip(rop, (point){0,0}, (point){width-1,height-1});
-	rop32_setcontext(rop, plane, width);
+	rop32_setcontext(rop, gfxstate.plane, width);
 	drmModeAddFB2(fd, width, height, DRM_FORMAT_XRGB8888,
-	    handles, pitches, offsets, &fb_id, 0);
-
-	drmcrtc = crtc;
-	drmconn = conn;
-	drmfbid = fb_id;
+	    gfxstate.handles, gfxstate.pitches, gfxstate.offsets,
+	    &gfxstate.fb_id, 0);
 
 	vtconfigure();
-	drmModeSetCrtc(fd, crtc->crtc_id, fb_id, 0, 0, &conn->connector_id, 1, &crtc->mode);
+	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, gfxstate.fb_id, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
 
 	winsize.tp_col = width / fnwidth;
 	winsize.tp_row = height / fnheight;
@@ -1380,7 +1378,7 @@ main(int argc, char *argv[])
 	/* Resetting character cells to a default value */
 	uint32_t k;
 	for (k = 0; k < width * height; k++) {
-		((uint32_t *)plane)[k] =
+		((uint32_t *)gfxstate.plane)[k] =
 		    colormap[teken_get_defattr(&tek)->ta_bgcolor];
 	}
 	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
@@ -1479,17 +1477,17 @@ main(int argc, char *argv[])
 	free(termbuf1);
 	free(termbuf2);
 
-	drmModeSetCrtc(fd, crtc->crtc_id, oldbuffer_id, 0, 0,
-	    &conn->connector_id, 1, &crtc->mode);
+	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id, 0, 0,
+	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
 	vtdeconf();
-	drmModeRmFB(fd, fb_id);
+	drmModeRmFB(fd, gfxstate.fb_id);
 
-	kms_bo_unmap(bo);
-	kms_bo_destroy(&bo);
-	kms_destroy(&kms);
+	kms_bo_unmap(gfxstate.bo);
+	kms_bo_destroy(&gfxstate.bo);
+	kms_destroy(&gfxstate.kms);
 
-	drmModeFreeConnector(conn);
-	drmModeFreeCrtc(crtc);
+	drmModeFreeConnector(gfxstate.conn);
+	drmModeFreeCrtc(gfxstate.crtc);
 	drmModeFreeResources(res);
 	drmClose(fd);
 
