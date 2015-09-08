@@ -93,20 +93,24 @@ struct xkb_state *state;
 
 int idle_timeout = 0;	/* idle timeout (in s) */
 
-struct drm_state {
-	int fd;
-	struct kms_driver *kms;
+struct drm_framebuffer {
 	struct kms_bo *bo;
 	unsigned handles[4], pitches[4], offsets[4];
 	void *plane;
 	uint32_t width, height;
-	uint32_t fb_id;
+	uint32_t fbid;
+};
+
+struct drm_state {
+	int fd;
+	struct kms_driver *kms;
 	drmModeCrtcPtr crtc;
 	drmModeConnectorPtr conn;
 	int oldbuffer_id;
 };
 
 struct drm_state gfxstate;
+struct drm_framebuffer framebuffer;
 
 int vtnum;
 #ifndef __linux__
@@ -999,8 +1003,11 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
 	if (drmSetMaster(gfxstate.fd) != 0)
 		perror("drmSetMaster");
-	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id, gfxstate.fb_id, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode) != 0)
+	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id,
+	    framebuffer.fbid, 0, 0, &gfxstate.conn->connector_id, 1,
+	    &gfxstate.crtc->mode) != 0) {
 		perror("drmModeSetCrtc");
+	}
 	active = true;
 	if (idleev != NULL)
 		event_add(idleev, &idletv);
@@ -1183,31 +1190,37 @@ drm_backend_init(int fd, struct drm_state *dst)
 }
 
 static void
-drm_backend_allocfb(struct drm_state *dst)
+drm_backend_allocfb(struct drm_state *dst, struct drm_framebuffer *fb)
 {
-	dst->width = dst->crtc->mode.hdisplay;
-	dst->height = dst->crtc->mode.vdisplay;
+	fb->width = dst->crtc->mode.hdisplay;
+	fb->height = dst->crtc->mode.vdisplay;
 
 	unsigned bo_attribs[] = {
-		KMS_WIDTH,	dst->width,
-		KMS_HEIGHT,	dst->height,
+		KMS_WIDTH,	fb->width,
+		KMS_HEIGHT,	fb->height,
 		KMS_BO_TYPE,	KMS_BO_TYPE_SCANOUT_X8R8G8B8,
 		KMS_TERMINATE_PROP_LIST
 	};
-	kms_bo_create(dst->kms, bo_attribs, &dst->bo);
-	kms_bo_get_prop(dst->bo, KMS_HANDLE, &dst->handles[0]);
-	kms_bo_get_prop(dst->bo, KMS_PITCH, &dst->pitches[0]);
+	kms_bo_create(dst->kms, bo_attribs, &fb->bo);
+	kms_bo_get_prop(fb->bo, KMS_HANDLE, &fb->handles[0]);
+	kms_bo_get_prop(fb->bo, KMS_PITCH, &fb->pitches[0]);
 #if 0
-	printf("dst->pitches[0] = %u\n", dst->pitches[0]);
-	printf("dst->handles[0] = %u\n", dst->handles[0]);
+	printf("fb->pitches[0] = %u\n", fb->pitches[0]);
+	printf("fb->handles[0] = %u\n", fb->handles[0]);
 #endif
-	dst->offsets[0] = 0;
-	kms_bo_map(dst->bo, &dst->plane);
-	drmModeAddFB2(dst->fd, dst->width, dst->height, DRM_FORMAT_XRGB8888,
-	    dst->handles, dst->pitches, dst->offsets,
-	    &dst->fb_id, 0);
-	rop32_setclip(rop, (point){0,0}, (point){dst->width-1,dst->height-1});
-	rop32_setcontext(rop, dst->plane, dst->width);
+	fb->offsets[0] = 0;
+	kms_bo_map(fb->bo, &fb->plane);
+	drmModeAddFB2(dst->fd, fb->width, fb->height, DRM_FORMAT_XRGB8888,
+	    fb->handles, fb->pitches, fb->offsets,
+	    &fb->fbid, 0);
+}
+
+static void
+drm_backend_destroyfb(struct drm_state *dst, struct drm_framebuffer *fb)
+{
+	drmModeRmFB(dst->fd, fb->fbid);
+	kms_bo_unmap(fb->bo);
+	kms_bo_destroy(&fb->bo);
 }
 
 int
@@ -1370,13 +1383,16 @@ main(int argc, char *argv[])
 	}
 
 	drm_backend_init(fd, &gfxstate);
-	drm_backend_allocfb(&gfxstate);
+	drm_backend_allocfb(&gfxstate, &framebuffer);
+	rop32_setclip(rop, (point){0,0},
+	    (point){framebuffer.width-1, framebuffer.height-1});
+	rop32_setcontext(rop, framebuffer.plane, framebuffer.width);
 
 	vtconfigure();
-	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, gfxstate.fb_id, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
+	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, framebuffer.fbid, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
 
-	winsize.tp_col = gfxstate.width / fnwidth;
-	winsize.tp_row = gfxstate.height / fnheight;
+	winsize.tp_col = framebuffer.width / fnwidth;
+	winsize.tp_row = framebuffer.height / fnheight;
 //	winsize.tp_col = 80;
 //	winsize.tp_row = 25;
 	teken_set_winsize(&tek, &winsize);
@@ -1393,8 +1409,8 @@ main(int argc, char *argv[])
 
 	/* Resetting character cells to a default value */
 	uint32_t k;
-	for (k = 0; k < gfxstate.width * gfxstate.height; k++) {
-		((uint32_t *)gfxstate.plane)[k] =
+	for (k = 0; k < framebuffer.width * framebuffer.height; k++) {
+		((uint32_t *)framebuffer.plane)[k] =
 		    colormap[teken_get_defattr(&tek)->ta_bgcolor];
 	}
 	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
@@ -1496,10 +1512,7 @@ main(int argc, char *argv[])
 	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id, 0, 0,
 	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
 	vtdeconf();
-	drmModeRmFB(fd, gfxstate.fb_id);
-
-	kms_bo_unmap(gfxstate.bo);
-	kms_bo_destroy(&gfxstate.bo);
+	drm_backend_destroyfb(&gfxstate, &framebuffer);
 	kms_destroy(&gfxstate.kms);
 
 	drmModeFreeConnector(gfxstate.conn);
