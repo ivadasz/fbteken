@@ -80,19 +80,6 @@ void	fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos)
 void	fbteken_param(void *thunk, int param, unsigned int val);
 void	fbteken_respond(void *thunk, const void *arg, size_t sz);
 
-static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len);
-static void	setdpms(int level);
-
-int ttyfd;
-
-struct kbdev_state *kbdst;
-
-struct xkb_context *ctx;
-struct xkb_keymap *keymap;
-struct xkb_state *state;
-
-int idle_timeout = 0;	/* idle timeout (in s) */
-
 struct drm_framebuffer {
 	struct kms_bo *bo;
 	unsigned handles[4], pitches[4], offsets[4];
@@ -107,7 +94,21 @@ struct drm_state {
 	drmModeCrtcPtr crtc;
 	drmModeConnectorPtr conn;
 	int oldbuffer_id;
+	int dpms_mode;
 };
+
+static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len);
+static void	setdpms(struct drm_state *dst, int level);
+
+int ttyfd;
+
+struct kbdev_state *kbdst;
+
+struct xkb_context *ctx;
+struct xkb_keymap *keymap;
+struct xkb_state *state;
+
+int idle_timeout = 0;	/* idle timeout (in s) */
 
 struct drm_state gfxstate;
 struct drm_framebuffer framebuffer;
@@ -158,13 +159,19 @@ uint32_t colormap[TC_NCOLORS * 2] = {
 	[TC_WHITE + TC_NCOLORS] = 0x00ffffff,
 };
 
+struct terminal {
+	struct bufent *buf;
+	teken_pos_t cursorpos;
+	int keypad, showcursor;
+};
+
+struct terminal term;
+
 /*
  * XXX organize termbuf as a linear array of pointers to rows, to reduce the
  *     cost of scrolling operations.
  */
-struct bufent *termbuf1, *termbuf2;
-teken_pos_t cursorpos;
-int keypad, showcursor;
+struct bufent *oldbuf;
 uint32_t *dirtybuf, dirtycount = 0;
 int dirtyflag = 0;
 teken_attr_t defattr = {
@@ -199,8 +206,8 @@ update_kbd_leds(void)
 static void
 dirty_cell_slow(uint16_t col, uint16_t row)
 {
-	if (!dirtyflag && !termbuf1[row * winsz.ws_col + col].dirty) {
-		termbuf1[row * winsz.ws_col + col].dirty = 1;
+	if (!dirtyflag && !term.buf[row * winsz.ws_col + col].dirty) {
+		term.buf[row * winsz.ws_col + col].dirty = 1;
 		dirtybuf[dirtycount] = row * winsz.ws_col + col;
 		dirtycount++;
 	}
@@ -222,7 +229,7 @@ render_cell(uint16_t col, uint16_t row)
 	uint32_t bg, fg, val;
 	int cursor, flags = 0;
 
-	cell = &termbuf1[row * winsz.ws_col + col];
+	cell = &term.buf[row * winsz.ws_col + col];
 	attr = &cell->attr;
 	cursor = cell->cursor;
 	ch = cell->ch;
@@ -251,7 +258,7 @@ render_cell(uint16_t col, uint16_t row)
 		bg = colormap[TC_BLACK];
 		err(1, "color out of range: %d\n", bg);
 	}
-	if (showcursor && cursor) {
+	if (term.showcursor && cursor) {
 		val = fg;
 		fg = bg;
 		bg = val;
@@ -273,16 +280,16 @@ set_cell_slow(uint16_t col, uint16_t row, teken_char_t ch,
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = termbuf1[row * winsz.ws_col + col].ch;
+	oldch = term.buf[row * winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = termbuf1[row * winsz.ws_col + col].attr;
+		oattr = term.buf[row * winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	termbuf1[row * winsz.ws_col + col].ch = ch;
-	termbuf1[row * winsz.ws_col + col].attr = *attr;
+	term.buf[row * winsz.ws_col + col].ch = ch;
+	term.buf[row * winsz.ws_col + col].attr = *attr;
 	dirty_cell_slow(col, row);
 }
 
@@ -293,16 +300,16 @@ set_cell_medium(uint16_t col, uint16_t row, teken_char_t ch,
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = termbuf1[row * winsz.ws_col + col].ch;
+	oldch = term.buf[row * winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = termbuf1[row * winsz.ws_col + col].attr;
+		oattr = term.buf[row * winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	termbuf1[row * winsz.ws_col + col].ch = ch;
-	termbuf1[row * winsz.ws_col + col].attr = *attr;
+	term.buf[row * winsz.ws_col + col].ch = ch;
+	term.buf[row * winsz.ws_col + col].attr = *attr;
 	dirty_cell_fast(col, row);
 }
 
@@ -315,9 +322,9 @@ fbteken_bell(void *thunk __unused)
 void
 fbteken_cursor(void *thunk __unused, const teken_pos_t *pos)
 {
-	if (cursorpos.tp_col == pos->tp_col && cursorpos.tp_row == pos->tp_row)
+	if (term.cursorpos.tp_col == pos->tp_col && term.cursorpos.tp_row == pos->tp_row)
 		return;
-	cursorpos = *pos;
+	term.cursorpos = *pos;
 }
 
 void
@@ -357,15 +364,15 @@ fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
 
 	if (srow < trow) {
 		for (a = h - 1; a >= 0; a--) {
-			memmove(&termbuf1[(trow + a) * winsz.ws_col + tcol],
-			    &termbuf1[(srow + a) * winsz.ws_col + scol],
-			    w * sizeof(*termbuf1));
+			memmove(&term.buf[(trow + a) * winsz.ws_col + tcol],
+			    &term.buf[(srow + a) * winsz.ws_col + scol],
+			    w * sizeof(*term.buf));
 		}
 	} else {
 		for (a = 0; a < h; a++) {
-			memmove(&termbuf1[(trow + a) * winsz.ws_col + tcol],
-			    &termbuf1[(srow + a) * winsz.ws_col + scol],
-			    w * sizeof(*termbuf1));
+			memmove(&term.buf[(trow + a) * winsz.ws_col + tcol],
+			    &term.buf[(srow + a) * winsz.ws_col + scol],
+			    w * sizeof(*term.buf));
 		}
 	}
 	dirtyflag = 1;
@@ -378,15 +385,15 @@ fbteken_param(void *thunk __unused, int param, unsigned int val)
 	switch (param) {
 	case 0:
 		if (val)
-			showcursor = 1;
+			term.showcursor = 1;
 		else
-			showcursor = 0;
+			term.showcursor = 0;
 		break;
 	case 1:
 		if (val)
-			keypad = 1;
+			term.keypad = 1;
 		else
-			keypad = 0;
+			term.keypad = 0;
 		break;
 	case 6:
 		/* XXX */
@@ -582,7 +589,7 @@ static void
 handleidle(evutil_socket_t fd __unused, short events __unused,
     void *arg __unused)
 {
-	setdpms(DRM_MODE_DPMS_SUSPEND);
+	setdpms(&gfxstate, DRM_MODE_DPMS_SUSPEND);
 
 	if (active)
 		event_add(idleev, &idletv);
@@ -600,17 +607,17 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	if (val > 0) {
 		prevdirty = dirtycount;
 		prevdirtyflag = dirtyflag;
-		oc = cursorpos;
-		termbuf1[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
+		oc = term.cursorpos;
+		term.buf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
 		teken_input(&tek, s, val);
-		if (oc.tp_col != cursorpos.tp_col ||
-		    oc.tp_row != cursorpos.tp_row) {
-			termbuf1[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
-			termbuf1[cursorpos.tp_row * winsz.ws_col + cursorpos.tp_col].cursor = 1;
+		if (oc.tp_col != term.cursorpos.tp_col ||
+		    oc.tp_row != term.cursorpos.tp_row) {
+			term.buf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
+			term.buf[term.cursorpos.tp_row * winsz.ws_col + term.cursorpos.tp_col].cursor = 1;
 			dirty_cell_slow(oc.tp_col, oc.tp_row);
-			dirty_cell_slow(cursorpos.tp_col, cursorpos.tp_row);
+			dirty_cell_slow(term.cursorpos.tp_col, term.cursorpos.tp_row);
 		} else {
-			termbuf1[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 1;
+			term.buf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 1;
 		}
 		if (prevdirty == 0 || prevdirtyflag == 0)
 			wait_vblank();
@@ -764,18 +771,16 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 }
 
 static void
-setdpms(int level)
+setdpms(struct drm_state *dst, int level)
 {
 	int i;
 	drmModePropertyPtr prop = NULL, props;
 
-	static int mode = DRM_MODE_DPMS_ON;
-
-	if (level == mode)
+	if (level == dst->dpms_mode)
 		return;
 
-	for (i = 0; i < gfxstate.conn->count_props; i++) {
-		props = drmModeGetProperty(gfxstate.fd, gfxstate.conn->props[i]);
+	for (i = 0; i < dst->conn->count_props; i++) {
+		props = drmModeGetProperty(dst->fd, dst->conn->props[i]);
 		if (props == NULL)
 			continue;
 
@@ -789,10 +794,10 @@ setdpms(int level)
 	if (prop == NULL)
 		return;
 
-	drmModeConnectorSetProperty(gfxstate.fd, gfxstate.conn->connector_id, prop->prop_id,
+	drmModeConnectorSetProperty(dst->fd, dst->conn->connector_id, prop->prop_id,
 	    level);
 	drmModeFreeProperty(prop);
-	mode = level;
+	dst->dpms_mode = level;
 }
 
 static int
@@ -805,10 +810,10 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 		event_add(idleev, &idletv);
 
 	if (sym == XKB_KEY_Print) {
-		setdpms(DRM_MODE_DPMS_SUSPEND);
+		setdpms(&gfxstate, DRM_MODE_DPMS_SUSPEND);
 		return 0;
 	} else {
-		setdpms(DRM_MODE_DPMS_ON);
+		setdpms(&gfxstate, DRM_MODE_DPMS_ON);
 	}
 
 	if ((switchvt = handle_vtswitch(sym)) > 0) {
@@ -899,11 +904,11 @@ cmp_cells(int i)
 {
 	teken_attr_t a, b;
 
-	a = termbuf1[i].attr;
-	b = termbuf2[i].attr;
+	a = term.buf[i].attr;
+	b = oldbuf[i].attr;
 
-	if (termbuf1[i].ch != termbuf2[i].ch ||
-	    termbuf1[i].cursor != termbuf2[i].cursor ||
+	if (term.buf[i].ch != oldbuf[i].ch ||
+	    term.buf[i].cursor != oldbuf[i].cursor ||
 	    a.ta_format != b.ta_format ||
 	    a.ta_fgcolor != b.ta_fgcolor ||
 	    a.ta_bgcolor != b.ta_bgcolor) {
@@ -914,18 +919,15 @@ cmp_cells(int i)
 }
 
 static void
-handle_vblank(int fd __unused, unsigned int sequence __unused,
-    unsigned int tv_sec __unused, unsigned int tv_usec __unused,
-    void *user_data __unused)
+redraw_term(void)
 {
-	struct bufent *tmp;
 	int idx;
 	unsigned int i;
 
 	if (dirtyflag) {
 		for (i = 0; i < (unsigned)winsz.ws_col * winsz.ws_row; i++) {
 			if (cmp_cells(i)) {
-				termbuf1[i].dirty = 0;
+				term.buf[i].dirty = 0;
 				render_cell(i % winsz.ws_col,
 				    i / winsz.ws_col);
 			}
@@ -933,21 +935,26 @@ handle_vblank(int fd __unused, unsigned int sequence __unused,
 	}
 	for (i = 0; i < dirtycount; i++) {
 		idx = dirtybuf[i];
-		if (termbuf1[idx].dirty) {
-			termbuf1[idx].dirty = 0;
+		if (term.buf[idx].dirty) {
+			term.buf[idx].dirty = 0;
 			render_cell(idx % winsz.ws_col,
 			    idx / winsz.ws_col);
 		}
 	}
 
-	memcpy(termbuf2, termbuf1,
-	    winsz.ws_col * winsz.ws_row * sizeof(*termbuf1));
-	tmp = termbuf2;
-	termbuf2 = termbuf1;
-	termbuf1 = tmp;
+	memcpy(oldbuf, term.buf,
+	    winsz.ws_col * winsz.ws_row * sizeof(*term.buf));
 
 	dirtycount = 0;
 	dirtyflag = 0;
+}
+
+static void
+handle_vblank(int fd __unused, unsigned int sequence __unused,
+    unsigned int tv_sec __unused, unsigned int tv_usec __unused,
+    void *user_data __unused)
+{
+	redraw_term();
 }
 
 static void
@@ -971,7 +978,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 {
 	printf("vtleave\n");
 
-	setdpms(DRM_MODE_DPMS_ON);
+	setdpms(&gfxstate, DRM_MODE_DPMS_ON);
 	repkeycode = 0;
 	repkeysym = 0;
 	evtimer_del(repeatev);
@@ -985,7 +992,8 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 		errx(1, "xkb_state_new failed");
 	update_kbd_leds();
 
-	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode) != 0)
+	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id,
+	    0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	if (drmDropMaster(gfxstate.fd) != 0)
 		perror("drmDropMaster");
@@ -1089,14 +1097,12 @@ drm_backend_init(int fd, struct drm_state *dst)
 	int i;
 
 	dst->fd = fd;
+	dst->dpms_mode = DRM_MODE_DPMS_ON;
 
 	res = drmModeGetResources(fd);
-	if (res == NULL) {
-		perror("drmModeGetResources");
-		exit(1);
-	}
+	if (res == NULL)
+		err(1, "drmModeGetResources");
 #if 0
-	printf("resources: %x\n", res);
 	printf("count_fbs: %d, count_crtcs: %d, count_connectors: %d, "
 	    "min_width: %u, max_width: %u, min_height: %u, max_height: %u\n",
 	    res->count_fbs, res->count_crtcs, res->count_connectors,
@@ -1171,13 +1177,13 @@ drm_backend_init(int fd, struct drm_state *dst)
 	printf("clock: %u\n", gfxstate.crtc->mode.clock);
 	printf("vrefresh: %u\n", gfxstate.crtc->mode.vrefresh);
 	printf("hdisplay: %u\n", gfxstate.crtc->mode.hdisplay);
-	printf("hsync_start: %u\n", gfxstate.crtc->mode.hsync_start);
-	printf("hsync_end: %u\n", gfxstate.crtc->mode.hsync_end);
+	printf("hsync_start: %u hsync_end: %u\n",
+	    gfxstate.crtc->mode.hsync_start, gfxstate.crtc->mode.hsync_end);
 	printf("htotal: %u\n", gfxstate.crtc->mode.htotal);
 	printf("hskew: %u\n", gfxstate.crtc->mode.hskew);
 	printf("vdisplay: %u\n", gfxstate.crtc->mode.vdisplay);
-	printf("vsync_start: %u\n", gfxstate.crtc->mode.vsync_start);
-	printf("vsync_end: %u\n", gfxstate.crtc->mode.vsync_end);
+	printf("vsync_start: %u vsync_end: %u\n",
+	    gfxstate.crtc->mode.vsync_start, gfxstate.crtc->mode.vsync_end);
 	printf("vtotal: %u\n", gfxstate.crtc->mode.vtotal);
 	printf("vscan: %u\n", gfxstate.crtc->mode.vscan);
 	printf("flags: %u\n", gfxstate.crtc->mode.flags);
@@ -1193,7 +1199,6 @@ static void
 drm_backend_finish(struct drm_state *dst)
 {
 	kms_destroy(&dst->kms);
-
 	drmModeFreeConnector(dst->conn);
 	drmModeFreeCrtc(dst->crtc);
 }
@@ -1410,11 +1415,11 @@ main(int argc, char *argv[])
         winsz.ws_xpixel = winsz.ws_col * fnwidth;
         winsz.ws_ypixel = winsz.ws_row * fnheight;
 	ioctl (amaster, TIOCSWINSZ, &winsz);
-	termbuf1 = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
-	termbuf2 = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
+	term.buf = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
+	oldbuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
 	dirtybuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(uint32_t));
-	keypad = 0;
-	showcursor = 1;
+	term.keypad = 0;
+	term.showcursor = 1;
 
 	/* Resetting character cells to a default value */
 	uint32_t k;
@@ -1423,13 +1428,13 @@ main(int argc, char *argv[])
 		    colormap[teken_get_defattr(&tek)->ta_bgcolor];
 	}
 	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
-		termbuf1[i].attr = *teken_get_defattr(&tek);
-		termbuf1[i].ch = ' ';
-		termbuf1[i].cursor = 0;
-		termbuf1[i].dirty = 0;
+		term.buf[i].attr = *teken_get_defattr(&tek);
+		term.buf[i].ch = ' ';
+		term.buf[i].cursor = 0;
+		term.buf[i].dirty = 0;
 	}
-	memcpy(termbuf2, termbuf1,
-	    winsz.ws_col * winsz.ws_row * sizeof(*termbuf1));
+	memcpy(oldbuf, term.buf,
+	    winsz.ws_col * winsz.ws_row * sizeof(*term.buf));
 
 	struct event *masterev, *ttyev, *drmev, *vtrelev, *vtacqev, *sigintev;
 
@@ -1492,7 +1497,7 @@ main(int argc, char *argv[])
 
 	event_base_loop(evbase, 0);
 	signal(SIGINT, SIG_DFL);
-	setdpms(DRM_MODE_DPMS_ON);
+	setdpms(&gfxstate, DRM_MODE_DPMS_ON);
 
 	event_del(sigintev);
 	event_del(vtacqev);
@@ -1515,8 +1520,8 @@ main(int argc, char *argv[])
 		event_free(idleev);
 	event_base_free(evbase);
 
-	free(termbuf1);
-	free(termbuf2);
+	free(term.buf);
+	free(oldbuf);
 
 	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id, 0, 0,
 	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
