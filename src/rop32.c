@@ -278,7 +278,7 @@ rop32_alphaexpand(void *target, int towidth, uint8_t *src, int x, int y,
 	ag = (bg & 0x0000ff00) >> 8;
 	ab = (bg & 0x000000ff) >> 0;
 
-#define AASCALE(c,d,f) (((((uint16_t)(c)) * (f)) + (((uint16_t)(d)) * (256 - (f)))) >> 8)
+#define AASCALE(c,d,f) (((((uint16_t)(c)) * (f)) + (((uint16_t)(d)) * (255 - (f)))) / 255)
 	for (i = 0; i < h; i++) {
 		for (j = 0; j < w; j++) {
 			a = mysrc[i * srcpitch + j];
