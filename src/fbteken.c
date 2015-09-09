@@ -76,7 +76,8 @@ void	fbteken_putchar(void *thunk, const teken_pos_t *pos, teken_char_t ch,
 	    const teken_attr_t *attr);
 void	fbteken_fill(void *thunk, const teken_rect_t *rect, teken_char_t ch,
 	    const teken_attr_t *attr);
-void	fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos);
+void	fbteken_copy(void *thunk, const teken_rect_t *rect,
+	    const teken_pos_t *pos);
 void	fbteken_param(void *thunk, int param, unsigned int val);
 void	fbteken_respond(void *thunk, const void *arg, size_t sz);
 
@@ -205,17 +206,18 @@ update_kbd_leds(void)
 }
 
 static void
-dirty_cell_slow(uint16_t col, uint16_t row)
+dirty_cell_slow(struct terminal *t, uint16_t col, uint16_t row)
 {
-	if (!dirtyflag && !term.buf[row * term.winsz.ws_col + col].dirty) {
-		term.buf[row * term.winsz.ws_col + col].dirty = 1;
-		dirtybuf[dirtycount] = row * term.winsz.ws_col + col;
+	if (!dirtyflag && !t->buf[row * t->winsz.ws_col + col].dirty) {
+		t->buf[row * t->winsz.ws_col + col].dirty = 1;
+		dirtybuf[dirtycount] = row * t->winsz.ws_col + col;
 		dirtycount++;
 	}
 }
 
 static void
-dirty_cell_fast(uint16_t col __unused, uint16_t row __unused)
+dirty_cell_fast(struct terminal *t __unused, uint16_t col __unused,
+    uint16_t row __unused)
 {
 	dirtyflag = 1;
 }
@@ -275,43 +277,43 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 }
 
 static void
-set_cell_slow(uint16_t col, uint16_t row, teken_char_t ch,
+set_cell_slow(struct terminal *t, uint16_t col, uint16_t row, teken_char_t ch,
     const teken_attr_t *attr)
 {
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = term.buf[row * term.winsz.ws_col + col].ch;
+	oldch = t->buf[row * t->winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = term.buf[row * term.winsz.ws_col + col].attr;
+		oattr = t->buf[row * t->winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	term.buf[row * term.winsz.ws_col + col].ch = ch;
-	term.buf[row * term.winsz.ws_col + col].attr = *attr;
-	dirty_cell_slow(col, row);
+	t->buf[row * t->winsz.ws_col + col].ch = ch;
+	t->buf[row * t->winsz.ws_col + col].attr = *attr;
+	dirty_cell_slow(t, col, row);
 }
 
 static void
-set_cell_medium(uint16_t col, uint16_t row, teken_char_t ch,
+set_cell_medium(struct terminal *t, uint16_t col, uint16_t row, teken_char_t ch,
     const teken_attr_t *attr)
 {
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = term.buf[row * term.winsz.ws_col + col].ch;
+	oldch = t->buf[row * t->winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = term.buf[row * term.winsz.ws_col + col].attr;
+		oattr = t->buf[row * t->winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	term.buf[row * term.winsz.ws_col + col].ch = ch;
-	term.buf[row * term.winsz.ws_col + col].attr = *attr;
-	dirty_cell_fast(col, row);
+	term.buf[row * t->winsz.ws_col + col].ch = ch;
+	term.buf[row * t->winsz.ws_col + col].attr = *attr;
+	dirty_cell_fast(t, col, row);
 }
 
 void
@@ -321,40 +323,46 @@ fbteken_bell(void *thunk __unused)
 }
 
 void
-fbteken_cursor(void *thunk __unused, const teken_pos_t *pos)
+fbteken_cursor(void *thunk, const teken_pos_t *pos)
 {
-	if (term.cursorpos.tp_col == pos->tp_col && term.cursorpos.tp_row == pos->tp_row)
+	struct terminal *t = (struct terminal *)thunk;
+
+	if (t->cursorpos.tp_col == pos->tp_col &&
+	    t->cursorpos.tp_row == pos->tp_row)
 		return;
-	term.cursorpos = *pos;
+	t->cursorpos = *pos;
 }
 
 void
-fbteken_putchar(void *thunk __unused, const teken_pos_t *pos, teken_char_t ch,
+fbteken_putchar(void *thunk, const teken_pos_t *pos, teken_char_t ch,
     const teken_attr_t *attr)
 {
-	set_cell_slow(pos->tp_col, pos->tp_row, ch, attr);
+	struct terminal *t = (struct terminal *)thunk;
+
+	set_cell_slow(t, pos->tp_col, pos->tp_row, ch, attr);
 }
 
 void
-fbteken_fill(void *thunk __unused, const teken_rect_t *rect, teken_char_t ch,
+fbteken_fill(void *thunk, const teken_rect_t *rect, teken_char_t ch,
     const teken_attr_t *attr)
 {
+	struct terminal *t = (struct terminal *)thunk;
 	teken_unit_t a, b;
 
 	for (a = rect->tr_begin.tp_row; a < rect->tr_end.tp_row; a++) {
 		for (b = rect->tr_begin.tp_col; b < rect->tr_end.tp_col; b++) {
-			set_cell_medium(b, a, ch, attr);
+			set_cell_medium(t, b, a, ch, attr);
 		}
 	}
 }
 
 void
-fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
-    const teken_pos_t *pos)
+fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos)
 {
-	int a;
+	struct terminal *t = (struct terminal *)thunk;
 	teken_unit_t w, h;
 	teken_unit_t scol, srow, tcol, trow;
+	int a;
 
 	scol = rect->tr_begin.tp_col;
 	srow = rect->tr_begin.tp_row;
@@ -365,36 +373,38 @@ fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
 
 	if (srow < trow) {
 		for (a = h - 1; a >= 0; a--) {
-			memmove(&term.buf[(trow + a) * term.winsz.ws_col + tcol],
-			    &term.buf[(srow + a) * term.winsz.ws_col + scol],
-			    w * sizeof(*term.buf));
+			memmove(&t->buf[(trow + a) * t->winsz.ws_col + tcol],
+			    &t->buf[(srow + a) * t->winsz.ws_col + scol],
+			    w * sizeof(*t->buf));
 		}
 	} else {
 		for (a = 0; a < h; a++) {
-			memmove(&term.buf[(trow + a) * term.winsz.ws_col + tcol],
-			    &term.buf[(srow + a) * term.winsz.ws_col + scol],
-			    w * sizeof(*term.buf));
+			memmove(&t->buf[(trow + a) * t->winsz.ws_col + tcol],
+			    &t->buf[(srow + a) * t->winsz.ws_col + scol],
+			    w * sizeof(*t->buf));
 		}
 	}
 	dirtyflag = 1;
 }
 
 void
-fbteken_param(void *thunk __unused, int param, unsigned int val)
+fbteken_param(void *thunk, int param, unsigned int val)
 {
+	struct terminal *t = (struct terminal *)thunk;
+
 //	fprintf(stderr, "fbteken_param param=%d val=%u\n", param, val);
 	switch (param) {
 	case 0:
 		if (val)
-			term.showcursor = 1;
+			t->showcursor = 1;
 		else
-			term.showcursor = 0;
+			t->showcursor = 0;
 		break;
 	case 1:
 		if (val)
-			term.keypad = 1;
+			t->keypad = 1;
 		else
-			term.keypad = 0;
+			t->keypad = 0;
 		break;
 	case 6:
 		/* XXX */
@@ -610,8 +620,8 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 		    oc.tp_row != term.cursorpos.tp_row) {
 			term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 0;
 			term.buf[term.cursorpos.tp_row * term.winsz.ws_col + term.cursorpos.tp_col].cursor = 1;
-			dirty_cell_slow(oc.tp_col, oc.tp_row);
-			dirty_cell_slow(term.cursorpos.tp_col, term.cursorpos.tp_row);
+			dirty_cell_slow(&term, oc.tp_col, oc.tp_row);
+			dirty_cell_slow(&term, term.cursorpos.tp_col, term.cursorpos.tp_row);
 		} else {
 			term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 1;
 		}
@@ -1378,7 +1388,7 @@ main(int argc, char *argv[])
 
 	set_nonblocking(term.amaster);
 
-	teken_init(&term.tek, &tek_funcs, NULL);
+	teken_init(&term.tek, &tek_funcs, &term);
 	if (whitebg)
 		teken_set_defattr(&term.tek, &white_defattr);
 	else
