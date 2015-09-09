@@ -1190,6 +1190,15 @@ drm_backend_init(int fd, struct drm_state *dst)
 }
 
 static void
+drm_backend_finish(struct drm_state *dst)
+{
+	kms_destroy(&dst->kms);
+
+	drmModeFreeConnector(dst->conn);
+	drmModeFreeCrtc(dst->crtc);
+}
+
+static void
 drm_backend_allocfb(struct drm_state *dst, struct drm_framebuffer *fb)
 {
 	fb->width = dst->crtc->mode.hdisplay;
@@ -1513,10 +1522,7 @@ main(int argc, char *argv[])
 	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
 	vtdeconf();
 	drm_backend_destroyfb(&gfxstate, &framebuffer);
-	kms_destroy(&gfxstate.kms);
-
-	drmModeFreeConnector(gfxstate.conn);
-	drmModeFreeCrtc(gfxstate.crtc);
+	drm_backend_finish(&gfxstate);
 	drmClose(fd);
 
 	xkb_finish();
