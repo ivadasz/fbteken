@@ -163,7 +163,7 @@ struct terminal {
 	pid_t child;
 };
 
-struct terminal term;
+struct terminal *curterm;
 
 /*
  * XXX organize termbuf as a linear array of pointers to rows, to reduce the
@@ -311,8 +311,8 @@ set_cell_medium(struct terminal *t, uint16_t col, uint16_t row, teken_char_t ch,
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	term.buf[row * t->winsz.ws_col + col].ch = ch;
-	term.buf[row * t->winsz.ws_col + col].attr = *attr;
+	t->buf[row * t->winsz.ws_col + col].ch = ch;
+	t->buf[row * t->winsz.ws_col + col].attr = *attr;
 	dirty_cell_fast(t, col, row);
 }
 
@@ -602,28 +602,29 @@ handleidle(evutil_socket_t fd __unused, short events __unused,
 }
 
 static void
-rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
+rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg)
 {
-	int val;
+	struct terminal *t = (struct terminal *)arg;
 	char s[0x1000];
 	teken_pos_t oc;
 	uint32_t prevdirty, prevdirtyflag;
+	int val;
 
-	val = read(term.amaster, s, 0x1000);
+	val = read(t->amaster, s, 0x1000);
 	if (val > 0) {
 		prevdirty = dirtycount;
 		prevdirtyflag = dirtyflag;
-		oc = term.cursorpos;
-		term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 0;
-		teken_input(&term.tek, s, val);
-		if (oc.tp_col != term.cursorpos.tp_col ||
-		    oc.tp_row != term.cursorpos.tp_row) {
-			term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 0;
-			term.buf[term.cursorpos.tp_row * term.winsz.ws_col + term.cursorpos.tp_col].cursor = 1;
-			dirty_cell_slow(&term, oc.tp_col, oc.tp_row);
-			dirty_cell_slow(&term, term.cursorpos.tp_col, term.cursorpos.tp_row);
+		oc = t->cursorpos;
+		t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 0;
+		teken_input(&t->tek, s, val);
+		if (oc.tp_col != t->cursorpos.tp_col ||
+		    oc.tp_row != t->cursorpos.tp_row) {
+			t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 0;
+			t->buf[t->cursorpos.tp_row * t->winsz.ws_col + t->cursorpos.tp_col].cursor = 1;
+			dirty_cell_slow(t, oc.tp_col, oc.tp_row);
+			dirty_cell_slow(t, t->cursorpos.tp_col, t->cursorpos.tp_row);
 		} else {
-			term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 1;
+			t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 1;
 		}
 		if (prevdirty == 0 || prevdirtyflag == 0)
 			wait_vblank();
@@ -679,7 +680,7 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 		evtimer_add(repeatev, &reprate);
 		if (n > 0) {
 			/* XXX Make sure we write everything */
-			write(term.amaster, out, n);
+			write(curterm->amaster, out, n);
 		}
 	}
 }
@@ -758,15 +759,15 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 			if (xkb_state_mod_name_is_active(state,
 			    "Mod1", XKB_STATE_MODS_EFFECTIVE) &&
 			    sym_to_seq[i].altt != 0) {
-				str = teken_get_sequence(&term.tek,
+				str = teken_get_sequence(&curterm->tek,
 				    sym_to_seq[i].altt);
 			} else if (xkb_state_mod_name_is_active(state,
 			    "Control", XKB_STATE_MODS_EFFECTIVE) &&
 			    sym_to_seq[i].ctlt != 0) {
-				str = teken_get_sequence(&term.tek,
+				str = teken_get_sequence(&curterm->tek,
 				    sym_to_seq[i].ctlt);
 			} else {
-				str = teken_get_sequence(&term.tek,
+				str = teken_get_sequence(&curterm->tek,
 				    sym_to_seq[i].t);
 			}
 			if (str != NULL)
@@ -902,7 +903,7 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 
 	if (n > 0) {
 		/* XXX Make sure we write everything */
-		write(term.amaster, out, n);
+		write(curterm->amaster, out, n);
 	}
 }
 
@@ -960,7 +961,7 @@ handle_vblank(int fd __unused, unsigned int sequence __unused,
     unsigned int tv_sec __unused, unsigned int tv_usec __unused,
     void *user_data __unused)
 {
-	redraw_term(&term);
+	redraw_term(curterm);
 }
 
 static void
@@ -1252,6 +1253,7 @@ main(int argc, char *argv[])
 	int fd;
 	char *shell;
 	teken_pos_t winsize;
+	struct terminal term;
 	char *normalfont = NULL, *boldfont = NULL;
 	int i, ch;
 	bool whitebg = false;
@@ -1371,6 +1373,7 @@ main(int argc, char *argv[])
 	char termenv[] = "TERM=xterm";
 	char defaultshell[] = "/bin/sh";
 
+	curterm = &term;
 	term.winsz = (struct winsize){
 		24, 80, 8 * 24, 16 * 80
 	};
@@ -1476,7 +1479,7 @@ main(int argc, char *argv[])
 	}
 
 	masterev = event_new(evbase, term.amaster,
-	    EV_READ | EV_PERSIST, rdmaster, NULL);
+	    EV_READ | EV_PERSIST, rdmaster, &term);
 	event_priority_set(masterev, 4);
 
 	repeatev = evtimer_new(evbase, keyrepeat, NULL);
