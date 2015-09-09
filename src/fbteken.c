@@ -123,13 +123,6 @@ struct rop_obj *rop;
 int fnwidth, fnheight;
 struct termios origtios;
 
-struct winsize winsz = {
-	24, 80, 8 * 24, 16 * 80
-};
-int amaster;
-pid_t child;
-
-teken_t tek;
 teken_funcs_t tek_funcs = {
 	fbteken_bell,
 	fbteken_cursor,
@@ -160,9 +153,13 @@ uint32_t colormap[TC_NCOLORS * 2] = {
 };
 
 struct terminal {
+	teken_t tek;
 	struct bufent *buf;
 	teken_pos_t cursorpos;
 	int keypad, showcursor;
+	struct winsize winsz;
+	int amaster;
+	pid_t child;
 };
 
 struct terminal term;
@@ -186,6 +183,10 @@ teken_attr_t white_defattr = {
 };
 
 struct event_base *evbase;
+struct event *idleev;
+
+/* idle timeout */
+struct timeval idletv = { .tv_sec = 0, .tv_usec = 0 };
 
 /* Synchronize xkbcommon keyboard LED state to the hardware keyboard */
 static void
@@ -206,9 +207,9 @@ update_kbd_leds(void)
 static void
 dirty_cell_slow(uint16_t col, uint16_t row)
 {
-	if (!dirtyflag && !term.buf[row * winsz.ws_col + col].dirty) {
-		term.buf[row * winsz.ws_col + col].dirty = 1;
-		dirtybuf[dirtycount] = row * winsz.ws_col + col;
+	if (!dirtyflag && !term.buf[row * term.winsz.ws_col + col].dirty) {
+		term.buf[row * term.winsz.ws_col + col].dirty = 1;
+		dirtybuf[dirtycount] = row * term.winsz.ws_col + col;
 		dirtycount++;
 	}
 }
@@ -220,7 +221,7 @@ dirty_cell_fast(uint16_t col __unused, uint16_t row __unused)
 }
 
 static void
-render_cell(uint16_t col, uint16_t row)
+render_cell(struct terminal *t, uint16_t col, uint16_t row)
 {
 	struct bufent *cell;
 	teken_attr_t *attr;
@@ -229,7 +230,7 @@ render_cell(uint16_t col, uint16_t row)
 	uint32_t bg, fg, val;
 	int cursor, flags = 0;
 
-	cell = &term.buf[row * winsz.ws_col + col];
+	cell = &t->buf[row * t->winsz.ws_col + col];
 	attr = &cell->attr;
 	cursor = cell->cursor;
 	ch = cell->ch;
@@ -258,7 +259,7 @@ render_cell(uint16_t col, uint16_t row)
 		bg = colormap[TC_BLACK];
 		err(1, "color out of range: %d\n", bg);
 	}
-	if (term.showcursor && cursor) {
+	if (t->showcursor && cursor) {
 		val = fg;
 		fg = bg;
 		bg = val;
@@ -280,16 +281,16 @@ set_cell_slow(uint16_t col, uint16_t row, teken_char_t ch,
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = term.buf[row * winsz.ws_col + col].ch;
+	oldch = term.buf[row * term.winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = term.buf[row * winsz.ws_col + col].attr;
+		oattr = term.buf[row * term.winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	term.buf[row * winsz.ws_col + col].ch = ch;
-	term.buf[row * winsz.ws_col + col].attr = *attr;
+	term.buf[row * term.winsz.ws_col + col].ch = ch;
+	term.buf[row * term.winsz.ws_col + col].attr = *attr;
 	dirty_cell_slow(col, row);
 }
 
@@ -300,16 +301,16 @@ set_cell_medium(uint16_t col, uint16_t row, teken_char_t ch,
 	teken_char_t oldch;
 	teken_attr_t oattr;
 
-	oldch = term.buf[row * winsz.ws_col + col].ch;
+	oldch = term.buf[row * term.winsz.ws_col + col].ch;
 	if (ch == oldch) {
-		oattr = term.buf[row * winsz.ws_col + col].attr;
+		oattr = term.buf[row * term.winsz.ws_col + col].attr;
 		if (oattr.ta_format == attr->ta_format &&
 		    oattr.ta_fgcolor == attr->ta_fgcolor &&
 		    oattr.ta_bgcolor == attr->ta_bgcolor)
 			return;
 	}
-	term.buf[row * winsz.ws_col + col].ch = ch;
-	term.buf[row * winsz.ws_col + col].attr = *attr;
+	term.buf[row * term.winsz.ws_col + col].ch = ch;
+	term.buf[row * term.winsz.ws_col + col].attr = *attr;
 	dirty_cell_fast(col, row);
 }
 
@@ -364,14 +365,14 @@ fbteken_copy(void *thunk __unused, const teken_rect_t *rect,
 
 	if (srow < trow) {
 		for (a = h - 1; a >= 0; a--) {
-			memmove(&term.buf[(trow + a) * winsz.ws_col + tcol],
-			    &term.buf[(srow + a) * winsz.ws_col + scol],
+			memmove(&term.buf[(trow + a) * term.winsz.ws_col + tcol],
+			    &term.buf[(srow + a) * term.winsz.ws_col + scol],
 			    w * sizeof(*term.buf));
 		}
 	} else {
 		for (a = 0; a < h; a++) {
-			memmove(&term.buf[(trow + a) * winsz.ws_col + tcol],
-			    &term.buf[(srow + a) * winsz.ws_col + scol],
+			memmove(&term.buf[(trow + a) * term.winsz.ws_col + tcol],
+			    &term.buf[(srow + a) * term.winsz.ws_col + scol],
 			    w * sizeof(*term.buf));
 		}
 	}
@@ -580,11 +581,6 @@ wait_vblank(void)
 	}
 }
 
-struct event *idleev;
-
-/* idle timeout */
-struct timeval idletv = { .tv_sec = 0, .tv_usec = 0 };
-
 static void
 handleidle(evutil_socket_t fd __unused, short events __unused,
     void *arg __unused)
@@ -603,21 +599,21 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	teken_pos_t oc;
 	uint32_t prevdirty, prevdirtyflag;
 
-	val = read(amaster, s, 0x1000);
+	val = read(term.amaster, s, 0x1000);
 	if (val > 0) {
 		prevdirty = dirtycount;
 		prevdirtyflag = dirtyflag;
 		oc = term.cursorpos;
-		term.buf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
-		teken_input(&tek, s, val);
+		term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 0;
+		teken_input(&term.tek, s, val);
 		if (oc.tp_col != term.cursorpos.tp_col ||
 		    oc.tp_row != term.cursorpos.tp_row) {
-			term.buf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 0;
-			term.buf[term.cursorpos.tp_row * winsz.ws_col + term.cursorpos.tp_col].cursor = 1;
+			term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 0;
+			term.buf[term.cursorpos.tp_row * term.winsz.ws_col + term.cursorpos.tp_col].cursor = 1;
 			dirty_cell_slow(oc.tp_col, oc.tp_row);
 			dirty_cell_slow(term.cursorpos.tp_col, term.cursorpos.tp_row);
 		} else {
-			term.buf[oc.tp_row * winsz.ws_col + oc.tp_col].cursor = 1;
+			term.buf[oc.tp_row * term.winsz.ws_col + oc.tp_col].cursor = 1;
 		}
 		if (prevdirty == 0 || prevdirtyflag == 0)
 			wait_vblank();
@@ -673,7 +669,7 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 		evtimer_add(repeatev, &reprate);
 		if (n > 0) {
 			/* XXX Make sure we write everything */
-			write(amaster, out, n);
+			write(term.amaster, out, n);
 		}
 	}
 }
@@ -752,15 +748,16 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 			if (xkb_state_mod_name_is_active(state,
 			    "Mod1", XKB_STATE_MODS_EFFECTIVE) &&
 			    sym_to_seq[i].altt != 0) {
-				str = teken_get_sequence(&tek,
+				str = teken_get_sequence(&term.tek,
 				    sym_to_seq[i].altt);
 			} else if (xkb_state_mod_name_is_active(state,
 			    "Control", XKB_STATE_MODS_EFFECTIVE) &&
 			    sym_to_seq[i].ctlt != 0) {
-				str = teken_get_sequence(&tek,
+				str = teken_get_sequence(&term.tek,
 				    sym_to_seq[i].ctlt);
 			} else {
-				str = teken_get_sequence(&tek, sym_to_seq[i].t);
+				str = teken_get_sequence(&term.tek,
+				    sym_to_seq[i].t);
 			}
 			if (str != NULL)
 				return snprintf(buf, len, "%s", str);
@@ -895,20 +892,20 @@ ttyread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 
 	if (n > 0) {
 		/* XXX Make sure we write everything */
-		write(amaster, out, n);
+		write(term.amaster, out, n);
 	}
 }
 
 static int
-cmp_cells(int i)
+cmp_cells(struct terminal *t, int i)
 {
 	teken_attr_t a, b;
 
-	a = term.buf[i].attr;
+	a = t->buf[i].attr;
 	b = oldbuf[i].attr;
 
-	if (term.buf[i].ch != oldbuf[i].ch ||
-	    term.buf[i].cursor != oldbuf[i].cursor ||
+	if (t->buf[i].ch != oldbuf[i].ch ||
+	    t->buf[i].cursor != oldbuf[i].cursor ||
 	    a.ta_format != b.ta_format ||
 	    a.ta_fgcolor != b.ta_fgcolor ||
 	    a.ta_bgcolor != b.ta_bgcolor) {
@@ -919,31 +916,30 @@ cmp_cells(int i)
 }
 
 static void
-redraw_term(void)
+redraw_term(struct terminal *t)
 {
 	int idx;
-	unsigned int i;
+	unsigned int i, cols, rows;
 
+	cols = t->winsz.ws_col;
+	rows = t->winsz.ws_row;
 	if (dirtyflag) {
-		for (i = 0; i < (unsigned)winsz.ws_col * winsz.ws_row; i++) {
-			if (cmp_cells(i)) {
-				term.buf[i].dirty = 0;
-				render_cell(i % winsz.ws_col,
-				    i / winsz.ws_col);
+		for (i = 0; i < cols * rows; i++) {
+			if (cmp_cells(t, i)) {
+				t->buf[i].dirty = 0;
+				render_cell(t, i % cols, i / cols);
 			}
 		}
 	}
 	for (i = 0; i < dirtycount; i++) {
 		idx = dirtybuf[i];
-		if (term.buf[idx].dirty) {
-			term.buf[idx].dirty = 0;
-			render_cell(idx % winsz.ws_col,
-			    idx / winsz.ws_col);
+		if (t->buf[idx].dirty) {
+			t->buf[idx].dirty = 0;
+			render_cell(t, idx % cols, idx / cols);
 		}
 	}
 
-	memcpy(oldbuf, term.buf,
-	    winsz.ws_col * winsz.ws_row * sizeof(*term.buf));
+	memcpy(oldbuf, t->buf, cols * rows * sizeof(*t->buf));
 
 	dirtycount = 0;
 	dirtyflag = 0;
@@ -954,7 +950,7 @@ handle_vblank(int fd __unused, unsigned int sequence __unused,
     unsigned int tv_sec __unused, unsigned int tv_usec __unused,
     void *user_data __unused)
 {
-	redraw_term();
+	redraw_term(&term);
 }
 
 static void
@@ -992,8 +988,9 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 		errx(1, "xkb_state_new failed");
 	update_kbd_leds();
 
-	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id,
-	    0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode) != 0)
+	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id,
+	    gfxstate.oldbuffer_id, 0, 0, &gfxstate.conn->connector_id, 1,
+	    &gfxstate.crtc->mode) != 0)
 		perror("drmModeSetCrtc");
 	if (drmDropMaster(gfxstate.fd) != 0)
 		perror("drmDropMaster");
@@ -1085,7 +1082,8 @@ usage(void)
 	fprintf(stderr,
 	    "usage: %s [-a | -A] [-hw] [-d delay] [-r rate] [-f fontfile "
 	    "[-F bold_fontfile]] [-i idle_timeout] [-s fontsize] "
-	    "[-k kbd_layout] [-o kbd_options] [-v kbd_variant]\n", getprogname());
+	    "[-k kbd_layout] [-o kbd_options] [-v kbd_variant]\n",
+	    getprogname());
 	exit(1);
 }
 
@@ -1133,7 +1131,7 @@ drm_backend_init(int fd, struct drm_state *dst)
 
 	/* Using only the first encoder in gfxstate.conn->encoders for now */
 	if (gfxstate.conn->count_encoders == 0)
-		errx(1, "No encoders on this conection: gfxstate.conn->count_encoders == 0\n");
+		errx(1, "No encoders on this conection\n");
 	else if (gfxstate.conn->count_encoders > 1)
 		printf("Using the first encoder in gfxstate.conn->encoders\n");
 	enc = drmModeGetEncoder(fd, gfxstate.conn->encoders[0]);
@@ -1158,6 +1156,10 @@ drm_backend_init(int fd, struct drm_state *dst)
 	}
 	if (i == res->count_crtcs)
 		errx(1, "No usable crtc found in enc->possible_crtcs\n");
+
+	drmModeFreeResources(res);
+	drmModeFreeEncoder(enc);
+
 #if 0
 	printf("gfxstate.crtc->crtc_id = %u\n", gfxstate.crtc->crtc_id);
 	printf("gfxstate.crtc->buffer_id = %u\n", gfxstate.crtc->buffer_id);
@@ -1191,8 +1193,6 @@ drm_backend_init(int fd, struct drm_state *dst)
 #endif
 
 	kms_create(dst->fd, &dst->kms);
-
-	drmModeFreeResources(res);
 }
 
 static void
@@ -1202,7 +1202,6 @@ drm_backend_finish(struct drm_state *dst)
 	drmModeFreeConnector(dst->conn);
 	drmModeFreeCrtc(dst->crtc);
 }
-
 static void
 drm_backend_allocfb(struct drm_state *dst, struct drm_framebuffer *fb)
 {
@@ -1362,10 +1361,13 @@ main(int argc, char *argv[])
 	char termenv[] = "TERM=xterm";
 	char defaultshell[] = "/bin/sh";
 
-	child = forkpty(&amaster, NULL, NULL, &winsz);
-	if (child == -1) {
+	term.winsz = (struct winsize){
+		24, 80, 8 * 24, 16 * 80
+	};
+	term.child = forkpty(&term.amaster, NULL, NULL, &term.winsz);
+	if (term.child == -1) {
 		err(EXIT_FAILURE, "forkpty");
-	} else if (child == 0) {
+	} else if (term.child == 0) {
 		shell = getenv("SHELL");
 		if (shell == NULL)
 			shell = defaultshell;
@@ -1374,13 +1376,13 @@ main(int argc, char *argv[])
 			err(EXIT_FAILURE, "execlp");
 	}
 
-	set_nonblocking(amaster);
+	set_nonblocking(term.amaster);
 
-	teken_init(&tek, &tek_funcs, NULL);
+	teken_init(&term.tek, &tek_funcs, NULL);
 	if (whitebg)
-		teken_set_defattr(&tek, &white_defattr);
+		teken_set_defattr(&term.tek, &white_defattr);
 	else
-		teken_set_defattr(&tek, &defattr);
+		teken_set_defattr(&term.tek, &defattr);
 
 	/* XXX handle errors (e.g. when invalid font paths are given) */
 	rop = rop32_init(normalfont, boldfont, fontheight,
@@ -1403,21 +1405,25 @@ main(int argc, char *argv[])
 	rop32_setcontext(rop, framebuffer.plane, framebuffer.width);
 
 	vtconfigure();
-	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, framebuffer.fbid, 0, 0, &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
+	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, framebuffer.fbid, 0, 0,
+	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
 
 	winsize.tp_col = framebuffer.width / fnwidth;
 	winsize.tp_row = framebuffer.height / fnheight;
 //	winsize.tp_col = 80;
 //	winsize.tp_row = 25;
-	teken_set_winsize(&tek, &winsize);
-        winsz.ws_col = winsize.tp_col;
-        winsz.ws_row = winsize.tp_row;
-        winsz.ws_xpixel = winsz.ws_col * fnwidth;
-        winsz.ws_ypixel = winsz.ws_row * fnheight;
-	ioctl (amaster, TIOCSWINSZ, &winsz);
-	term.buf = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
-	oldbuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(struct bufent));
-	dirtybuf = calloc(winsz.ws_col * winsz.ws_row, sizeof(uint32_t));
+	teken_set_winsize(&term.tek, &winsize);
+        term.winsz.ws_col = winsize.tp_col;
+        term.winsz.ws_row = winsize.tp_row;
+        term.winsz.ws_xpixel = term.winsz.ws_col * fnwidth;
+        term.winsz.ws_ypixel = term.winsz.ws_row * fnheight;
+	ioctl (term.amaster, TIOCSWINSZ, &term.winsz);
+	term.buf = calloc(term.winsz.ws_col * term.winsz.ws_row,
+	    sizeof(struct bufent));
+	oldbuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
+	    sizeof(struct bufent));
+	dirtybuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
+	    sizeof(uint32_t));
 	term.keypad = 0;
 	term.showcursor = 1;
 
@@ -1425,16 +1431,16 @@ main(int argc, char *argv[])
 	uint32_t k;
 	for (k = 0; k < framebuffer.width * framebuffer.height; k++) {
 		((uint32_t *)framebuffer.plane)[k] =
-		    colormap[teken_get_defattr(&tek)->ta_bgcolor];
+		    colormap[teken_get_defattr(&term.tek)->ta_bgcolor];
 	}
-	for (i = 0; i < winsz.ws_col * winsz.ws_row; i++) {
-		term.buf[i].attr = *teken_get_defattr(&tek);
+	for (i = 0; i < term.winsz.ws_col * term.winsz.ws_row; i++) {
+		term.buf[i].attr = *teken_get_defattr(&term.tek);
 		term.buf[i].ch = ' ';
 		term.buf[i].cursor = 0;
 		term.buf[i].dirty = 0;
 	}
 	memcpy(oldbuf, term.buf,
-	    winsz.ws_col * winsz.ws_row * sizeof(*term.buf));
+	    term.winsz.ws_col * term.winsz.ws_row * sizeof(*term.buf));
 
 	struct event *masterev, *ttyev, *drmev, *vtrelev, *vtacqev, *sigintev;
 
@@ -1459,7 +1465,7 @@ main(int argc, char *argv[])
 		event_priority_set(idleev, 5);
 	}
 
-	masterev = event_new(evbase, amaster,
+	masterev = event_new(evbase, term.amaster,
 	    EV_READ | EV_PERSIST, rdmaster, NULL);
 	event_priority_set(masterev, 4);
 
