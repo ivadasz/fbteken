@@ -100,6 +100,7 @@ struct drm_state {
 
 static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len);
 static void	setdpms(struct drm_state *dst, int level);
+static void	xkb_reset(void);
 
 int ttyfd;
 
@@ -992,11 +993,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	if (idleev != NULL)
 		event_del(idleev);
 	kbdev_reset_state(kbdst);
-	xkb_state_unref(state);
-	state = NULL;
-	state = xkb_state_new(keymap);
-	if (state == NULL)
-		errx(1, "xkb_state_new failed");
+	xkb_reset();
 	update_kbd_leds();
 
 	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id,
@@ -1085,6 +1082,17 @@ xkb_finish(void)
 		xkb_context_unref(ctx);
 		ctx = NULL;
 	}
+}
+
+static void
+xkb_reset(void)
+{
+	if (state != NULL)
+		xkb_state_unref(state);
+	state = NULL;
+	state = xkb_state_new(keymap);
+	if (state == NULL)
+		errx(1, "xkb_state_new failed");
 }
 
 static void
