@@ -24,6 +24,7 @@ terminal-cell buffer, or by optimizing away unneeded terminal operations..
 Keycode translation is currently tailored towards ISO and ANSI keyboard
 layouts. Special keys from e.g. japanese keyboards aren't handled yet.
 
-No support for keyboard LEDs yet.
-
 No support for a history buffer yet.
+
+double-buffering should be done for screen updates, to get tear-free display,
+and to make panel-self-refresh work nicely with fbteken.
