@@ -1381,6 +1381,7 @@ main(int argc, char *argv[])
 	char termenv[] = "TERM=xterm";
 	char defaultshell[] = "/bin/sh";
 
+	memset(&term, 0, sizeof(term));
 	curterm = &term;
 	term.winsz = (struct winsize){
 		24, 80, 8 * 24, 16 * 80
