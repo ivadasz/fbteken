@@ -98,9 +98,13 @@ struct drm_state {
 	int dpms_mode;
 };
 
-static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len);
-static void	setdpms(struct drm_state *dst, int level);
+static int	handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf,
+					   size_t len);
 static void	xkb_reset(void);
+static int	drm_backend_show(struct drm_state *dst,
+				 struct drm_framebuffer *fb);
+static int	drm_backend_hide(struct drm_state *dst);
+static void	drm_set_dpms(struct drm_state *dst, int level);
 
 int ttyfd;
 
@@ -596,7 +600,7 @@ static void
 handleidle(evutil_socket_t fd __unused, short events __unused,
     void *arg __unused)
 {
-	setdpms(&gfxstate, DRM_MODE_DPMS_SUSPEND);
+	drm_set_dpms(&gfxstate, DRM_MODE_DPMS_SUSPEND);
 
 	if (active)
 		event_add(idleev, &idletv);
@@ -780,7 +784,7 @@ handle_term_special_keysym(xkb_keysym_t sym, uint8_t *buf, size_t len)
 }
 
 static void
-setdpms(struct drm_state *dst, int level)
+drm_set_dpms(struct drm_state *dst, int level)
 {
 	int i;
 	drmModePropertyPtr prop = NULL, props;
@@ -803,8 +807,8 @@ setdpms(struct drm_state *dst, int level)
 	if (prop == NULL)
 		return;
 
-	drmModeConnectorSetProperty(dst->fd, dst->conn->connector_id, prop->prop_id,
-	    level);
+	drmModeConnectorSetProperty(dst->fd, dst->conn->connector_id,
+	    prop->prop_id, level);
 	drmModeFreeProperty(prop);
 	dst->dpms_mode = level;
 }
@@ -819,10 +823,10 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 		event_add(idleev, &idletv);
 
 	if (sym == XKB_KEY_Print) {
-		setdpms(&gfxstate, DRM_MODE_DPMS_SUSPEND);
+		drm_set_dpms(&gfxstate, DRM_MODE_DPMS_SUSPEND);
 		return 0;
 	} else {
-		setdpms(&gfxstate, DRM_MODE_DPMS_ON);
+		drm_set_dpms(&gfxstate, DRM_MODE_DPMS_ON);
 	}
 
 	if ((switchvt = handle_vtswitch(sym)) > 0) {
@@ -986,7 +990,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 {
 	printf("vtleave\n");
 
-	setdpms(&gfxstate, DRM_MODE_DPMS_ON);
+	drm_set_dpms(&gfxstate, DRM_MODE_DPMS_ON);
 	repkeycode = 0;
 	repkeysym = 0;
 	evtimer_del(repeatev);
@@ -996,12 +1000,7 @@ vtrelease(evutil_socket_t fd __unused, short events __unused,
 	xkb_reset();
 	update_kbd_leds();
 
-	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id,
-	    gfxstate.oldbuffer_id, 0, 0, &gfxstate.conn->connector_id, 1,
-	    &gfxstate.crtc->mode) != 0)
-		perror("drmModeSetCrtc");
-	if (drmDropMaster(gfxstate.fd) != 0)
-		perror("drmDropMaster");
+	drm_backend_hide(&gfxstate);
 	ioctl(ttyfd, VT_RELDISP, VT_TRUE);
 	active = false;
 }
@@ -1014,13 +1013,7 @@ vtacquire(evutil_socket_t fd __unused, short events __unused,
 	ioctl(ttyfd, VT_RELDISP, VT_ACKACQ);
 	ioctl(ttyfd, VT_ACTIVATE, vtnum);
 	ioctl(ttyfd, VT_WAITACTIVE, vtnum);
-	if (drmSetMaster(gfxstate.fd) != 0)
-		perror("drmSetMaster");
-	if (drmModeSetCrtc(gfxstate.fd, gfxstate.crtc->crtc_id,
-	    framebuffer.fbid, 0, 0, &gfxstate.conn->connector_id, 1,
-	    &gfxstate.crtc->mode) != 0) {
-		perror("drmModeSetCrtc");
-	}
+	drm_backend_show(&gfxstate, &framebuffer);
 	active = true;
 	if (idleev != NULL)
 		event_add(idleev, &idletv);
@@ -1106,19 +1099,31 @@ usage(void)
 	exit(1);
 }
 
-static void
-drm_backend_init(int fd, struct drm_state *dst)
+static int
+drm_backend_init(struct drm_state *dst)
 {
 	drmModeResPtr res;
 	drmModeEncoderPtr enc;
-	int i;
+	int fd, i;
+
+	fd = drmOpen("i915", NULL);
+	if (fd < 0) {
+		perror("drmOpen(\"i915\", NULL)");
+		fd = drmOpen("radeon", NULL);
+		if (fd < 0) {
+			perror("drmOpen(\"radeon\", NULL)");
+			return 1;
+		}
+	}
 
 	dst->fd = fd;
 	dst->dpms_mode = DRM_MODE_DPMS_ON;
 
 	res = drmModeGetResources(fd);
-	if (res == NULL)
-		err(1, "drmModeGetResources");
+	if (res == NULL) {
+		warn("drmModeGetResources");
+		return 1;
+	}
 #if 0
 	printf("count_fbs: %d, count_crtcs: %d, count_connectors: %d, "
 	    "min_width: %u, max_width: %u, min_height: %u, max_height: %u\n",
@@ -1132,8 +1137,10 @@ drm_backend_init(int fd, struct drm_state *dst)
 		if(dst->conn->connection == DRM_MODE_CONNECTED)
 			break;
 	}
-	if (res->count_connectors <= 0)
-		errx(1, "No Monitor connected");
+	if (res->count_connectors <= 0) {
+		warnx("No Monitor connected");
+		return 1;
+	}
 #if 0
 	printf("dst->conn->mmWidth: %u\n", dst->conn->mmWidth);
 	printf("dst->conn->mmHeight: %u\n", dst->conn->mmHeight);
@@ -1149,10 +1156,12 @@ drm_backend_init(int fd, struct drm_state *dst)
 #endif
 
 	/* Using only the first encoder in gfxstate.conn->encoders for now */
-	if (gfxstate.conn->count_encoders == 0)
-		errx(1, "No encoders on this conection\n");
-	else if (gfxstate.conn->count_encoders > 1)
+	if (gfxstate.conn->count_encoders == 0) {
+		warnx("No encoders on this conection\n");
+		return 1;
+	} else if (gfxstate.conn->count_encoders > 1) {
 		printf("Using the first encoder in gfxstate.conn->encoders\n");
+	}
 	enc = drmModeGetEncoder(fd, gfxstate.conn->encoders[0]);
 #if 0
 	printf("enc->encoder_id = %u\n", enc->encoder_id);
@@ -1173,8 +1182,10 @@ drm_backend_init(int fd, struct drm_state *dst)
 				break;
 		}
 	}
-	if (i == res->count_crtcs)
-		errx(1, "No usable crtc found in enc->possible_crtcs\n");
+	if (i == res->count_crtcs) {
+		warnx("No usable crtc found in enc->possible_crtcs\n");
+		return 1;
+	}
 
 	drmModeFreeResources(res);
 	drmModeFreeEncoder(enc);
@@ -1190,8 +1201,10 @@ drm_backend_init(int fd, struct drm_state *dst)
 
 	/* Just use the first display mode given in gfxstate.conn->modes */
 	/* XXX Allow the user to override the mode via a commandline argument */
-	if (gfxstate.conn->count_modes == 0)
-		errx(1, "No display mode specified in gfxstate.conn->modes\n");
+	if (gfxstate.conn->count_modes == 0) {
+		warnx("No display mode specified in gfxstate.conn->modes\n");
+		return 1;
+	}
 	gfxstate.crtc->mode = gfxstate.conn->modes[0];
 #if 0
 	printf("Display mode:\n");
@@ -1212,6 +1225,8 @@ drm_backend_init(int fd, struct drm_state *dst)
 #endif
 
 	kms_create(dst->fd, &dst->kms);
+
+	return 0;
 }
 
 static void
@@ -1220,6 +1235,7 @@ drm_backend_finish(struct drm_state *dst)
 	kms_destroy(&dst->kms);
 	drmModeFreeConnector(dst->conn);
 	drmModeFreeCrtc(dst->crtc);
+	drmClose(dst->fd);
 }
 static void
 drm_backend_allocfb(struct drm_state *dst, struct drm_framebuffer *fb)
@@ -1255,10 +1271,43 @@ drm_backend_destroyfb(struct drm_state *dst, struct drm_framebuffer *fb)
 	kms_bo_destroy(&fb->bo);
 }
 
+static int
+drm_backend_show(struct drm_state *dst, struct drm_framebuffer *fb)
+{
+	int ret = 0;
+
+	if (drmSetMaster(gfxstate.fd) != 0) {
+		perror("drmSetMaster");
+		ret = 1;
+	}
+	if (drmModeSetCrtc(dst->fd, dst->crtc->crtc_id, fb->fbid, 0, 0,
+	    &dst->conn->connector_id, 1, &dst->crtc->mode) != 0) {
+		perror("drmModeSetCrtc");
+		ret = 1;
+	}
+	return ret;
+}
+
+static int
+drm_backend_hide(struct drm_state *dst)
+{
+	int ret = 0;
+
+	if (drmModeSetCrtc(dst->fd, dst->crtc->crtc_id, dst->oldbuffer_id,
+	    0, 0, &dst->conn->connector_id, 1, &dst->crtc->mode) != 0) {
+		perror("drmModeSetCrtc");
+		ret = 1;
+	}
+	if (drmDropMaster(dst->fd) != 0) {
+		perror("drmDropMaster");
+		ret = 1;
+	}
+	return ret;
+}
+
 int
 main(int argc, char *argv[])
 {
-	int fd;
 	char *shell;
 	teken_pos_t winsize;
 	struct terminal term;
@@ -1410,25 +1459,16 @@ main(int argc, char *argv[])
 	rop = rop32_init(normalfont, boldfont, fontheight,
 	    &fnwidth, &fnheight, alpha);
 
-	fd = drmOpen("i915", NULL);
-	if (fd < 0) {
-		perror("drmOpen(\"i915\", NULL)");
-		fd = drmOpen("radeon", NULL);
-		if (fd < 0) {
-			perror("drmOpen(\"radeon\", NULL)");
-			exit(1);
-		}
+	if (drm_backend_init(&gfxstate) != 0) {
+		errx(1, "Failed to initialize drm backend");
 	}
-
-	drm_backend_init(fd, &gfxstate);
 	drm_backend_allocfb(&gfxstate, &framebuffer);
 	rop32_setclip(rop, (point){0,0},
 	    (point){framebuffer.width-1, framebuffer.height-1});
 	rop32_setcontext(rop, framebuffer.plane, framebuffer.width);
 
 	vtconfigure();
-	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, framebuffer.fbid, 0, 0,
-	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
+	drm_backend_show(&gfxstate, &framebuffer);
 
 	winsize.tp_col = framebuffer.width / fnwidth;
 	winsize.tp_row = framebuffer.height / fnheight;
@@ -1500,7 +1540,7 @@ main(int argc, char *argv[])
 
 	/* XXX event handler for writes to the master fd of the pty device */
 
-	drmev = event_new(evbase, fd,
+	drmev = event_new(evbase, gfxstate.fd,
 	    EV_READ | EV_PERSIST, drmread, NULL);
 	event_priority_set(drmev, 1);
 
@@ -1525,7 +1565,7 @@ main(int argc, char *argv[])
 
 	event_base_loop(evbase, 0);
 	signal(SIGINT, SIG_DFL);
-	setdpms(&gfxstate, DRM_MODE_DPMS_ON);
+	drm_set_dpms(&gfxstate, DRM_MODE_DPMS_ON);
 
 	event_del(sigintev);
 	event_del(vtacqev);
@@ -1551,12 +1591,10 @@ main(int argc, char *argv[])
 	free(term.buf);
 	free(oldbuf);
 
-	drmModeSetCrtc(fd, gfxstate.crtc->crtc_id, gfxstate.oldbuffer_id, 0, 0,
-	    &gfxstate.conn->connector_id, 1, &gfxstate.crtc->mode);
+	drm_backend_hide(&gfxstate);
 	vtdeconf();
 	drm_backend_destroyfb(&gfxstate, &framebuffer);
 	drm_backend_finish(&gfxstate);
-	drmClose(fd);
 
 	xkb_finish();
 }
