@@ -4,7 +4,7 @@ MAN=
 
 CFLAGS+=	-I/usr/local/include
 
-WARNS?=	6
+WARNS?=	3
 
 LDADD+=	-L/usr/local/lib
 LDADD+=	-lpthread -lutil -levent -lwayland-client -lxkbcommon
