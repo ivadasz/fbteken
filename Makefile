@@ -1,3 +1,3 @@
-SUBDIR=	libkbdev libteken src
+SUBDIR=	libkbdev libteken src wayland
 
 .include <bsd.subdir.mk>
