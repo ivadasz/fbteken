@@ -40,7 +40,6 @@
 #endif
 #include <libgen.h>
 #include <libutil.h>
-#include <pthread.h>
 #include <termios.h>
 
 #include <event2/event.h>
@@ -122,9 +121,9 @@ struct terminal *curterm;
  * XXX organize termbuf as a linear array of pointers to rows, to reduce the
  *     cost of scrolling operations.
  */
-struct bufent *oldbuf;
-uint32_t *dirtybuf, dirtycount = 0;
-int dirtyflag = 0;
+struct bufent *oldbuf, *ooldbuf;
+uint32_t *dirtybuf, *odirtybuf, dirtycount = 0, odirtycount = 0;
+int dirtyflag = 0, odirtyflag = 0;
 teken_attr_t defattr = {
 	ta_format : 0,
 	ta_fgcolor : TC_WHITE,
@@ -144,6 +143,7 @@ dirty_cell_slow(struct terminal *t, uint16_t col, uint16_t row)
 		dirtybuf[dirtycount] = row * t->winsz.ws_col + col;
 		dirtycount++;
 	}
+//	printf("dirtycount=0x%x dirtyflag=%d\n", dirtycount, dirtyflag);
 }
 
 static void
@@ -370,23 +370,22 @@ static void
 rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg)
 {
 	struct terminal *t = (struct terminal *)arg;
-	char s[0x1000];
+	char s[0x2000];
 	teken_pos_t oc;
 	int val;
+	int oldshow = t->showcursor;
 
-	val = read(t->amaster, s, 0x1000);
+	val = read(t->amaster, s, sizeof(s));
 	if (val > 0) {
 		oc = t->cursorpos;
 		t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 0;
 		teken_input(&t->tek, s, val);
+		t->buf[t->cursorpos.tp_row * t->winsz.ws_col + t->cursorpos.tp_col].cursor = t->showcursor;
 		if (oc.tp_col != t->cursorpos.tp_col ||
-		    oc.tp_row != t->cursorpos.tp_row) {
-			t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 0;
-			t->buf[t->cursorpos.tp_row * t->winsz.ws_col + t->cursorpos.tp_col].cursor = 1;
+		    oc.tp_row != t->cursorpos.tp_row ||
+		    oldshow != t->showcursor) {
 			dirty_cell_slow(t, oc.tp_col, oc.tp_row);
 			dirty_cell_slow(t, t->cursorpos.tp_col, t->cursorpos.tp_row);
-		} else {
-			t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 1;
 		}
 		ww_window_dirty(window);
 	} else if (val == 0 || errno != EAGAIN) {
@@ -498,17 +497,16 @@ handle_keypress(struct xkb_state *state, xkb_keycode_t code, xkb_keysym_t sym,
 	return fbteken_key_get_utf8(state, code, buf, len);
 }
 
-#if 0
 static int
 cmp_cells(struct terminal *t, int i)
 {
 	teken_attr_t a, b;
 
 	a = t->buf[i].attr;
-	b = oldbuf[i].attr;
+	b = ooldbuf[i].attr;
 
-	if (t->buf[i].ch != oldbuf[i].ch ||
-	    t->buf[i].cursor != oldbuf[i].cursor ||
+	if (t->buf[i].ch != ooldbuf[i].ch ||
+	    t->buf[i].cursor != ooldbuf[i].cursor ||
 	    a.ta_format != b.ta_format ||
 	    a.ta_fgcolor != b.ta_fgcolor ||
 	    a.ta_bgcolor != b.ta_bgcolor) {
@@ -517,35 +515,52 @@ cmp_cells(struct terminal *t, int i)
 
 	return 0;
 }
-#endif
 
 static void
 redraw_term(struct terminal *t)
 {
-//	int idx;
+	int idx;
 	unsigned int i, cols, rows;
 
 	cols = t->winsz.ws_col;
 	rows = t->winsz.ws_row;
-//	if (dirtyflag) {
+	if (dirtyflag || odirtyflag) {
 		for (i = 0; i < cols * rows; i++) {
-//			if (cmp_cells(t, i)) {
-				t->buf[i].dirty = 0;
+			t->buf[i].dirty = 0;
+			if (cmp_cells(t, i)) {
 				render_cell(t, i % cols, i / cols);
+			}
+		}
+	} else {
+		/* XXX Merge dirty buffers */
+		for (i = 0; i < odirtycount; i++) {
+			idx = odirtybuf[i];
+//			if (t->buf[idx].dirty) {
+//				t->buf[idx].dirty = 0;
+				render_cell(t, idx % cols, idx / cols);
 //			}
 		}
-//	}
-//	for (i = 0; i < dirtycount; i++) {
-//		idx = dirtybuf[i];
-//		if (t->buf[idx].dirty) {
-//			t->buf[idx].dirty = 0;
-//			render_cell(t, idx % cols, idx / cols);
-//		}
-//	}
+		for (i = 0; i < dirtycount; i++) {
+			idx = dirtybuf[i];
+//			if (t->buf[idx].dirty) {
+				t->buf[idx].dirty = 0;
+				render_cell(t, idx % cols, idx / cols);
+//			}
+		}
+		for (i = 0; i < cols * rows; i++) {
+			t->buf[i].dirty = 0;
+		}
+	}
 
+	memcpy(ooldbuf, oldbuf, cols * rows * sizeof(*t->buf));
 	memcpy(oldbuf, t->buf, cols * rows * sizeof(*t->buf));
 
+	void *tmp = dirtybuf;
+	dirtybuf = odirtybuf;
+	odirtybuf = tmp;
+	odirtycount = dirtycount;
 	dirtycount = 0;
+	odirtyflag = dirtyflag;
 	dirtyflag = 0;
 }
 
@@ -746,12 +761,20 @@ main(int argc, char *argv[])
 	ioctl (term.amaster, TIOCSWINSZ, &term.winsz);
 	term.buf = calloc(term.winsz.ws_col * term.winsz.ws_row,
 	    sizeof(struct bufent));
+	ooldbuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
+	    sizeof(struct bufent));
 	oldbuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
 	    sizeof(struct bufent));
+	odirtybuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
+	    sizeof(uint32_t));
 	dirtybuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
 	    sizeof(uint32_t));
 	term.keypad = 0;
 	term.showcursor = 1;
+	dirtyflag = 1;
+	odirtyflag = 1;
+	dirtycount = 0;
+	odirtycount = 0;
 
 	/* Resetting character cells to a default value */
 	for (i = 0; i < term.winsz.ws_col * term.winsz.ws_row; i++) {
@@ -760,9 +783,6 @@ main(int argc, char *argv[])
 		term.buf[i].cursor = 0;
 		term.buf[i].dirty = 0;
 	}
-	memcpy(oldbuf, term.buf,
-	    term.winsz.ws_col * term.winsz.ws_row * sizeof(*term.buf));
-
 	struct event *masterev, *sigintev;
 
 	evbase = ww_base_get_evbase(base);
@@ -801,6 +821,7 @@ main(int argc, char *argv[])
 	event_free(masterev);
 
 	free(term.buf);
+	free(ooldbuf);
 	free(oldbuf);
 
 	ww_window_destroy(window);
