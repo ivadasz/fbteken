@@ -387,7 +387,9 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg)
 			dirty_cell_slow(t, oc.tp_col, oc.tp_row);
 			dirty_cell_slow(t, t->cursorpos.tp_col, t->cursorpos.tp_row);
 		}
-		ww_window_dirty(window);
+		if (dirtyflag || odirtyflag ||
+		    dirtycount > 0 || odirtycount > 0)
+			ww_window_dirty(window);
 	} else if (val == 0 || errno != EAGAIN) {
 		ww_base_loopbreak(base);
 	}
@@ -531,20 +533,31 @@ redraw_term(struct terminal *t)
 				render_cell(t, i % cols, i / cols);
 			}
 		}
+		ww_window_damaged(window, 0, 0,
+		    cols * fnwidth, rows * fnheight);
 	} else {
+		int x, y;
 		/* XXX Merge dirty buffers */
 		for (i = 0; i < odirtycount; i++) {
 			idx = odirtybuf[i];
 //			if (t->buf[idx].dirty) {
 //				t->buf[idx].dirty = 0;
-				render_cell(t, idx % cols, idx / cols);
+				x = idx % cols;
+				y = idx / cols;
+				render_cell(t, x, y);
+				ww_window_damaged(window,
+				    x*fnwidth, y*fnheight, fnwidth, fnheight);
 //			}
 		}
 		for (i = 0; i < dirtycount; i++) {
 			idx = dirtybuf[i];
 //			if (t->buf[idx].dirty) {
 				t->buf[idx].dirty = 0;
-				render_cell(t, idx % cols, idx / cols);
+				x = idx % cols;
+				y = idx / cols;
+				render_cell(t, x, y);
+				ww_window_damaged(window,
+				    x*fnwidth, y*fnheight, fnwidth, fnheight);
 //			}
 		}
 		for (i = 0; i < cols * rows; i++) {
