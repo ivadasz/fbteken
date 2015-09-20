@@ -232,3 +232,22 @@ kbdev_read_events(struct kbdev_state *state, struct kbdev_event *out, int cnt)
 
 	return n;
 }
+
+/* Returns 0 if no more pressed keys in queue, 1 otherwise */
+int
+kbdev_pop_pressed(struct kbdev_state *state, struct kbdev_event *out)
+{
+	struct kbdev_event ev;
+
+retry:
+	if (state->npressed > 0) {
+		state->npressed--;
+		ev = atcode_to_event(state->pressed[state->npressed]);
+		if (ev.keycode == 0)
+			goto retry;
+		ev.pressed = 0;
+		*out = ev;
+		return 1;
+	}
+	return 0;
+}

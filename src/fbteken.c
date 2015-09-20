@@ -479,7 +479,7 @@ vtconfigure(void)
 	snprintf(vtname, sizeof(vtname), "/dev/ttyv%01x", vtno - 1);
 
 	fd = open(vtname, O_RDWR);
-	if(fd < 0) {
+	if (fd < 0) {
 		warn("%s", vtname);
 		exit(1);
 	}
@@ -506,18 +506,18 @@ vtconfigure(void)
 	m.frsig = SIGIO; /* not used, but has to be set anyway */
 #endif
 	ret = ioctl(fd, VT_SETMODE, &m);
-	if(ret != 0) {
+	if (ret != 0) {
 		printf("ioctl VT_SETMODE failed\n");
 	}
 #ifdef __linux__
 	ret = ioctl(fd, VT_GETSTATE, &s);
-	if(ret != 0) {
+	if (ret != 0) {
 		printf("ioctl VT_GETSTATE failed\n");
 	}
 	vtnum = s.v_active;
 #else
 	ret = ioctl(fd, VT_GETACTIVE, &vtnum);
-	if(ret != 0) {
+	if (ret != 0) {
 		printf("ioctl VT_GETACTIVE failed\n");
 	}
 #endif
@@ -1367,7 +1367,7 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 's':
-			fontheight = strtonum(optarg, 1, 128, &errstr);
+			fontheight = strtonum(optarg, 6, 128, &errstr);
 			if (errstr) {
 				errx(1, "font height is %s: %s", errstr,
 				    optarg);

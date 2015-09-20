@@ -43,4 +43,6 @@ void kbdev_reset_state(struct kbdev_state *state);
 int kbdev_read_events(struct kbdev_state *state, struct kbdev_event *out,
 		      int cnt);
 
+int kbdev_pop_pressed(struct kbdev_state *state, struct kbdev_event *out);
+
 #endif /* !_KBDEV_H_ */
