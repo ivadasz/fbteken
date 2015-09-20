@@ -762,7 +762,7 @@ main(int argc, char *argv[])
 	if (window == NULL)
 		errx(1, "ww_window_create failed\n");
 	rop32_setclip(rop, (point){0,0},
-	    (point){fnwidth*columns-1, fnheight*rows-1});
+	    (point){fnwidth*columns, fnheight*rows});
 
 	winsize.tp_col = columns;
 	winsize.tp_row = rows;
