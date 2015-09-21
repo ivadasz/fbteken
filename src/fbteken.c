@@ -941,17 +941,21 @@ redraw_term(struct terminal *t)
 	rows = t->winsz.ws_row;
 	if (dirtyflag) {
 		for (i = 0; i < cols * rows; i++) {
+			t->buf[i].dirty = 0;
 			if (cmp_cells(t, i)) {
-				t->buf[i].dirty = 0;
 				render_cell(t, i % cols, i / cols);
 			}
 		}
-	}
-	for (i = 0; i < dirtycount; i++) {
-		idx = dirtybuf[i];
-		if (t->buf[idx].dirty) {
-			t->buf[idx].dirty = 0;
-			render_cell(t, idx % cols, idx / cols);
+	} else {
+		for (i = 0; i < dirtycount; i++) {
+			idx = dirtybuf[i];
+//			if (t->buf[idx].dirty) {
+				t->buf[idx].dirty = 0;
+				render_cell(t, idx % cols, idx / cols);
+//			}
+		}
+		for (i = 0; i < cols * rows; i++) {
+			t->buf[i].dirty = 0;
 		}
 	}
 
@@ -1464,7 +1468,7 @@ main(int argc, char *argv[])
 	}
 	drm_backend_allocfb(&gfxstate, &framebuffer);
 	rop32_setclip(rop, (point){0,0},
-	    (point){framebuffer.width-1, framebuffer.height-1});
+	    (point){framebuffer.width, framebuffer.height});
 	rop32_setcontext(rop, framebuffer.plane, framebuffer.width);
 
 	vtconfigure();
