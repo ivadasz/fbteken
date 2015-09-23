@@ -1,5 +1,6 @@
 PROG=	fbteken
 SRCS=	fbteken.c ../src/rop32.c
+MAN=
 
 .if exists(${.OBJDIR}/../libteken)
 LIBTEKEN=${.OBJDIR}/../libteken/libteken.a
