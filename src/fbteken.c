@@ -61,7 +61,7 @@
 
 #include "fbdraw.h"
 #include "../libteken/teken.h"
-#include "kbdev.h"
+#include "../libkbdev/kbdev.h"
 
 struct bufent {
 	teken_char_t ch;

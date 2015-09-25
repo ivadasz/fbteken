@@ -6,7 +6,7 @@ INTERNALLIB=	YES
 
 CFLAGS+=	-I${.OBJDIR}
 
-WARNS?=	6
+WARNS?=	5
 
 SRCS=	teken.c teken_state.h
 CLEANFILES=	teken_state.h

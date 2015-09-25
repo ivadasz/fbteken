@@ -1,5 +1,6 @@
 LIB=	kbdev
-SHLIB_MAJOR= 0
+
+INTERNALLIB=	YES
 
 CFLAGS+=-I${.OBJDIR}
 
