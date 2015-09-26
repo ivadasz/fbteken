@@ -216,8 +216,8 @@ skipbold:
 		printf("Failed to set pixel size %d for font \"%s\"\n", h, fp);
 		return NULL;
 	}
-	self->fontwidth = (self->sz->metrics.max_advance >> 6) + 1;
-	self->fontheight = (self->sz->metrics.height >> 6) + 1;
+	self->fontwidth = (self->sz->metrics.max_advance >> 6);
+	self->fontheight = (self->sz->metrics.height >> 6);
 #if 0
 	printf("width: %d height: %d\n", self->fontwidth, self->fontheight);
 #endif
