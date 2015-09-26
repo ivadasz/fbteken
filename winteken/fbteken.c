@@ -45,6 +45,7 @@
 
 #include <event2/event.h>
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-compose.h>
 #include <waywin.h>
 #include "../src/fbdraw.h"
 #include "../libteken/teken.h"
@@ -66,6 +67,11 @@ void	fbteken_copy(void *thunk, const teken_rect_t *rect,
 	    const teken_pos_t *pos);
 void	fbteken_param(void *thunk, int param, unsigned int val);
 void	fbteken_respond(void *thunk, const void *arg, size_t sz);
+
+struct window_state {
+	struct xkb_compose_state *compstate;
+	/* XXX */
+};
 
 static int	handle_term_special_keysym(struct xkb_state *state,
 					   xkb_keysym_t sym, uint8_t *buf,
@@ -483,11 +489,33 @@ handle_term_special_keysym(struct xkb_state *state, xkb_keysym_t sym,
 }
 
 static int
-handle_keypress(struct xkb_state *state, xkb_keycode_t code, xkb_keysym_t sym,
-    uint8_t *buf, int len)
+handle_keypress(struct xkb_state *state, struct xkb_compose_state *compstate,
+     xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 {
+	enum xkb_compose_feed_result feedres;
+	enum xkb_compose_status compres;
 	int cnt = 0;
 
+	if (compstate == NULL)
+		goto nocompose;
+	feedres = xkb_compose_state_feed(compstate, sym);
+	if (feedres == XKB_COMPOSE_FEED_IGNORED)
+		goto nocompose;
+	compres = xkb_compose_state_get_status(compstate);
+	if (compres == XKB_COMPOSE_CANCELLED) {
+		xkb_compose_state_reset(compstate);
+		return 0;
+	} else if (compres == XKB_COMPOSE_COMPOSING) {
+		return 0;
+	} else if (compres == XKB_COMPOSE_COMPOSED) {
+		sym = xkb_compose_state_get_one_sym(compstate);
+		cnt = handle_term_special_keysym(state, sym, buf, len);
+		if (cnt > 0)
+			return cnt;
+		return xkb_compose_state_get_utf8(compstate, buf, len);
+	}
+
+nocompose:
 	cnt = handle_term_special_keysym(state, sym, buf, len);
 	if (cnt > 0)
 		return cnt;
@@ -594,16 +622,19 @@ draw(struct ww_window *win __unused, void *arg __unused, uint8_t *mem,
 }
 
 static void
-kbdfun(struct ww_window *win __unused, struct xkb_state *state,
+kbdfun(struct ww_window *win, struct xkb_state *state,
     xkb_keycode_t code, int pressed)
 {
 	xkb_keysym_t keysym;
+	struct window_state *st = ww_window_data_get(win);
 	uint8_t out[32];
 	int n = 0;
 
 	keysym = xkb_state_key_get_one_sym(state, code);
-	if (pressed)
-		n = handle_keypress(state, code, keysym, out, sizeof(out));
+	if (pressed) {
+		n = handle_keypress(state, st->compstate, code, keysym,
+		    out, sizeof(out));
+	}
 	if (n > 0) {
 		/* XXX Make sure we write everything */
 		write(curterm->amaster, out, n);
@@ -643,6 +674,8 @@ main(int argc, char *argv[])
 
 	const char *errstr;
 	struct stat fontstat;
+
+	struct window_state winstate;
 
 	/* XXX handle bitmap fonts better */
 	while ((ch = getopt(argc, argv, "aAhwf:F:s:c:r:")) != -1) {
@@ -770,7 +803,8 @@ main(int argc, char *argv[])
 	if (base == NULL)
 		errx(1, "ww_base_create failed\n");
 	ww_base_set_keyrepeat(base, 200, 50);
-	window = ww_window_create(base, NULL, fnwidth * columns,
+	winstate.compstate = ww_compose_state_create(base);
+	window = ww_window_create(base, &winstate, fnwidth * columns,
 	    fnheight * rows, draw);
 	if (window == NULL)
 		errx(1, "ww_window_create failed\n");
@@ -850,6 +884,7 @@ main(int argc, char *argv[])
 	free(ooldbuf);
 	free(oldbuf);
 
+	xkb_compose_state_unref(winstate.compstate);
 	ww_window_destroy(window);
 	ww_base_destroy(base);
 }
