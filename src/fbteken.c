@@ -42,6 +42,7 @@
 #include <termios.h>
 
 #include <sys/param.h>
+#include <sys/stat.h>
 #ifdef __linux__
 #include <linux/vt.h>
 #else
@@ -1324,6 +1325,7 @@ main(int argc, char *argv[])
 	char *kbd_layout = NULL, *kbd_options = NULL, *kbd_variant = NULL;
 
 	const char *errstr;
+	struct stat fontstat;
 
 	unsigned int repeat_delay = 200;
 	unsigned int repeat_rate = 30;
@@ -1421,6 +1423,11 @@ main(int argc, char *argv[])
 	alpha = false;
 #endif
 
+	if (normalfont != NULL && stat(normalfont, &fontstat) != 0) {
+		warn("%s", normalfont);
+		normalfont = NULL;
+	}
+
 	if (boldfont != NULL && normalfont == NULL) {
 		/* That doesn't really make any sense */
 		errx(1, "Only a bold font was specified, this doesn't make "
@@ -1439,6 +1446,10 @@ main(int argc, char *argv[])
 	term.winsz = (struct winsize){
 		24, 80, 8 * 24, 16 * 80
 	};
+	/*
+	 * XXX This should rather come at the end of initialization because
+	 *     it usually will never fail.
+	 */
 	term.child = forkpty(&term.amaster, NULL, NULL, &term.winsz);
 	if (term.child == -1) {
 		err(EXIT_FAILURE, "forkpty");
