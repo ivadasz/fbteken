@@ -763,6 +763,8 @@ main(int argc, char *argv[])
 	/* XXX handle errors (e.g. when invalid font paths are given) */
 	rop = rop32_init(normalfont, boldfont, fontheight,
 	    &fnwidth, &fnheight, alpha);
+	if (rop == NULL)
+		errx(1, "rop32_init failed, aborting");
 
 	base = ww_base_create(NULL, kbdfun, pointerfun);
 	if (base == NULL)
