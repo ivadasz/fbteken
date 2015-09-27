@@ -49,13 +49,7 @@
 #include <waywin.h>
 #include "../src/fbdraw.h"
 #include "../libteken/teken.h"
-
-struct bufent {
-	teken_char_t ch;
-	teken_attr_t attr;
-	int16_t cursor;
-	int16_t dirty;
-};
+#include "bufent.h"
 
 void	fbteken_bell(void *thunk);
 void	fbteken_cursor(void *thunk, const teken_pos_t *pos);
@@ -114,7 +108,7 @@ uint32_t colormap[TC_NCOLORS * 2] = {
 
 struct terminal {
 	teken_t tek;
-	struct bufent *buf;
+	struct buffer *buf;
 	teken_pos_t cursorpos;
 	int keypad, showcursor;
 	struct winsize winsz;
@@ -129,8 +123,8 @@ struct terminal *curterm;
  *     cost of scrolling operations.
  */
 struct bufent *oldbuf, *ooldbuf;
-uint32_t *dirtybuf, *odirtybuf, dirtycount = 0, odirtycount = 0;
-int dirtyflag = 0, odirtyflag = 0;
+uint32_t *odirtybuf, odirtycount = 0;
+int odirtyflag = 0;
 teken_attr_t defattr = {
 	ta_format : 0,
 	ta_fgcolor : TC_WHITE,
@@ -143,24 +137,6 @@ teken_attr_t white_defattr = {
 };
 
 static void
-dirty_cell_slow(struct terminal *t, uint16_t col, uint16_t row)
-{
-	if (!dirtyflag && !t->buf[row * t->winsz.ws_col + col].dirty) {
-		t->buf[row * t->winsz.ws_col + col].dirty = 1;
-		dirtybuf[dirtycount] = row * t->winsz.ws_col + col;
-		dirtycount++;
-	}
-//	printf("dirtycount=0x%x dirtyflag=%d\n", dirtycount, dirtyflag);
-}
-
-static void
-dirty_cell_fast(struct terminal *t __unused, uint16_t col __unused,
-    uint16_t row __unused)
-{
-	dirtyflag = 1;
-}
-
-static void
 render_cell(struct terminal *t, uint16_t col, uint16_t row)
 {
 	struct bufent *cell;
@@ -170,7 +146,7 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 	uint32_t bg, fg, val;
 	int cursor, flags = 0;
 
-	cell = &t->buf[row * t->winsz.ws_col + col];
+	cell = BUFFER_CELL_XY(t->buf, col, row);
 	attr = &cell->attr;
 	cursor = cell->cursor;
 	ch = cell->ch;
@@ -214,46 +190,6 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 		rop32_char(rop, (point){sx, sy}, fg, bg, ch, flags);
 }
 
-static void
-set_cell_slow(struct terminal *t, uint16_t col, uint16_t row, teken_char_t ch,
-    const teken_attr_t *attr)
-{
-	teken_char_t oldch;
-	teken_attr_t oattr;
-
-	oldch = t->buf[row * t->winsz.ws_col + col].ch;
-	if (ch == oldch) {
-		oattr = t->buf[row * t->winsz.ws_col + col].attr;
-		if (oattr.ta_format == attr->ta_format &&
-		    oattr.ta_fgcolor == attr->ta_fgcolor &&
-		    oattr.ta_bgcolor == attr->ta_bgcolor)
-			return;
-	}
-	t->buf[row * t->winsz.ws_col + col].ch = ch;
-	t->buf[row * t->winsz.ws_col + col].attr = *attr;
-	dirty_cell_slow(t, col, row);
-}
-
-static void
-set_cell_medium(struct terminal *t, uint16_t col, uint16_t row, teken_char_t ch,
-    const teken_attr_t *attr)
-{
-	teken_char_t oldch;
-	teken_attr_t oattr;
-
-	oldch = t->buf[row * t->winsz.ws_col + col].ch;
-	if (ch == oldch) {
-		oattr = t->buf[row * t->winsz.ws_col + col].attr;
-		if (oattr.ta_format == attr->ta_format &&
-		    oattr.ta_fgcolor == attr->ta_fgcolor &&
-		    oattr.ta_bgcolor == attr->ta_bgcolor)
-			return;
-	}
-	t->buf[row * t->winsz.ws_col + col].ch = ch;
-	t->buf[row * t->winsz.ws_col + col].attr = *attr;
-	dirty_cell_fast(t, col, row);
-}
-
 void
 fbteken_bell(void *thunk __unused)
 {
@@ -277,7 +213,7 @@ fbteken_putchar(void *thunk, const teken_pos_t *pos, teken_char_t ch,
 {
 	struct terminal *t = (struct terminal *)thunk;
 
-	set_cell_slow(t, pos->tp_col, pos->tp_row, ch, attr);
+	bufent_buffer_set(t->buf, pos->tp_col, pos->tp_row, ch, attr);
 }
 
 void
@@ -285,44 +221,16 @@ fbteken_fill(void *thunk, const teken_rect_t *rect, teken_char_t ch,
     const teken_attr_t *attr)
 {
 	struct terminal *t = (struct terminal *)thunk;
-	teken_unit_t a, b;
 
-	for (a = rect->tr_begin.tp_row; a < rect->tr_end.tp_row; a++) {
-		for (b = rect->tr_begin.tp_col; b < rect->tr_end.tp_col; b++) {
-			set_cell_medium(t, b, a, ch, attr);
-		}
-	}
+	bufent_buffer_fill(t->buf, rect, ch, attr);
 }
 
 void
 fbteken_copy(void *thunk, const teken_rect_t *rect, const teken_pos_t *pos)
 {
 	struct terminal *t = (struct terminal *)thunk;
-	teken_unit_t w, h;
-	teken_unit_t scol, srow, tcol, trow;
-	int a;
 
-	scol = rect->tr_begin.tp_col;
-	srow = rect->tr_begin.tp_row;
-	tcol = pos->tp_col;
-	trow = pos->tp_row;
-	w = rect->tr_end.tp_col - rect->tr_begin.tp_col;
-	h = rect->tr_end.tp_row - rect->tr_begin.tp_row;
-
-	if (srow < trow) {
-		for (a = h - 1; a >= 0; a--) {
-			memmove(&t->buf[(trow + a) * t->winsz.ws_col + tcol],
-			    &t->buf[(srow + a) * t->winsz.ws_col + scol],
-			    w * sizeof(*t->buf));
-		}
-	} else {
-		for (a = 0; a < h; a++) {
-			memmove(&t->buf[(trow + a) * t->winsz.ws_col + tcol],
-			    &t->buf[(srow + a) * t->winsz.ws_col + scol],
-			    w * sizeof(*t->buf));
-		}
-	}
-	dirtyflag = 1;
+	bufent_buffer_copy(t->buf, rect, pos);
 }
 
 void
@@ -385,17 +293,17 @@ rdmaster(evutil_socket_t fd __unused, short events __unused, void *arg)
 	val = read(t->amaster, s, sizeof(s));
 	if (val > 0) {
 		oc = t->cursorpos;
-		t->buf[oc.tp_row * t->winsz.ws_col + oc.tp_col].cursor = 0;
+		BUFFER_CELL_XY(t->buf, oc.tp_col, oc.tp_row)->cursor = 0;
 		teken_input(&t->tek, s, val);
-		t->buf[t->cursorpos.tp_row * t->winsz.ws_col + t->cursorpos.tp_col].cursor = t->showcursor;
+		BUFFER_CELL_XY(t->buf, t->cursorpos.tp_col, t->cursorpos.tp_row)->cursor = t->showcursor;
 		if (oc.tp_col != t->cursorpos.tp_col ||
 		    oc.tp_row != t->cursorpos.tp_row ||
 		    oldshow != t->showcursor) {
-			dirty_cell_slow(t, oc.tp_col, oc.tp_row);
-			dirty_cell_slow(t, t->cursorpos.tp_col, t->cursorpos.tp_row);
+			bufent_buffer_dirtycell_xy(t->buf, oc.tp_col, oc.tp_row);
+			bufent_buffer_dirtycell_xy(t->buf, t->cursorpos.tp_col, t->cursorpos.tp_row);
 		}
-		if (dirtyflag || odirtyflag ||
-		    dirtycount > 0 || odirtycount > 0)
+		if (t->buf->dirtyflag || odirtyflag ||
+		    t->buf->dirtycount > 0 || odirtycount > 0)
 			ww_window_dirty(window);
 	} else if (val == 0 || errno != EAGAIN) {
 		ww_base_loopbreak(base);
@@ -532,12 +440,13 @@ static int
 cmp_cells(struct terminal *t, int i)
 {
 	teken_attr_t a, b;
+	struct bufent *cell = BUFFER_CELL_I(t->buf, i);
 
-	a = t->buf[i].attr;
+	a = cell->attr;
 	b = ooldbuf[i].attr;
 
-	if (t->buf[i].ch != ooldbuf[i].ch ||
-	    t->buf[i].cursor != ooldbuf[i].cursor ||
+	if (cell->ch != ooldbuf[i].ch ||
+	    cell->cursor != ooldbuf[i].cursor ||
 	    a.ta_format != b.ta_format ||
 	    a.ta_fgcolor != b.ta_fgcolor ||
 	    a.ta_bgcolor != b.ta_bgcolor) {
@@ -555,9 +464,9 @@ redraw_term(struct terminal *t)
 
 	cols = t->winsz.ws_col;
 	rows = t->winsz.ws_row;
-	if (dirtyflag || odirtyflag) {
+	if (t->buf->dirtyflag || odirtyflag) {
 		for (i = 0; i < cols * rows; i++) {
-			t->buf[i].dirty = 0;
+			BUFFER_CELL_I(t->buf, i)->dirty = 0;
 			if (cmp_cells(t, i)) {
 				render_cell(t, i % cols, i / cols);
 			}
@@ -569,7 +478,7 @@ redraw_term(struct terminal *t)
 		/* XXX Merge dirty buffers */
 		for (i = 0; i < odirtycount; i++) {
 			idx = odirtybuf[i];
-//			if (t->buf[idx].dirty) {
+//			if (BUFFER_CELL_I(t->buf, idx)->dirty) {
 //				t->buf[idx].dirty = 0;
 				x = idx % cols;
 				y = idx / cols;
@@ -578,10 +487,10 @@ redraw_term(struct terminal *t)
 				    x*fnwidth, y*fnheight, fnwidth, fnheight);
 //			}
 		}
-		for (i = 0; i < dirtycount; i++) {
-			idx = dirtybuf[i];
-//			if (t->buf[idx].dirty) {
-				t->buf[idx].dirty = 0;
+		for (i = 0; i < t->buf->dirtycount; i++) {
+			idx = t->buf->dirtybuf[i];
+//			if (BUFFER_CELL_I(t->buf, idx)->dirty) {
+				BUFFER_CELL_I(t->buf, idx)->dirty = 0;
 				x = idx % cols;
 				y = idx / cols;
 				render_cell(t, x, y);
@@ -590,20 +499,21 @@ redraw_term(struct terminal *t)
 //			}
 		}
 		for (i = 0; i < cols * rows; i++) {
-			t->buf[i].dirty = 0;
+			t->buf->mem[i].dirty = 0;
+//			BUFFER_CELL_I(t->buf, i)->dirty = 0;
 		}
 	}
 
-	memcpy(ooldbuf, oldbuf, cols * rows * sizeof(*t->buf));
-	memcpy(oldbuf, t->buf, cols * rows * sizeof(*t->buf));
+	memcpy(ooldbuf, oldbuf, cols * rows * sizeof(*oldbuf));
+	bufent_buffer_save(t->buf, oldbuf);
 
-	void *tmp = dirtybuf;
-	dirtybuf = odirtybuf;
+	void *tmp = t->buf->dirtybuf;
+	t->buf->dirtybuf = odirtybuf;
 	odirtybuf = tmp;
-	odirtycount = dirtycount;
-	dirtycount = 0;
-	odirtyflag = dirtyflag;
-	dirtyflag = 0;
+	odirtycount = t->buf->dirtycount;
+	t->buf->dirtycount = 0;
+	odirtyflag = t->buf->dirtyflag;
+	t->buf->dirtyflag = 0;
 }
 
 static void
@@ -819,29 +729,24 @@ main(int argc, char *argv[])
         term.winsz.ws_xpixel = term.winsz.ws_col * fnwidth;
         term.winsz.ws_ypixel = term.winsz.ws_row * fnheight;
 	ioctl (term.amaster, TIOCSWINSZ, &term.winsz);
-	term.buf = calloc(term.winsz.ws_col * term.winsz.ws_row,
-	    sizeof(struct bufent));
+	term.buf = bufent_buffer_create(term.winsz.ws_col, term.winsz.ws_row);
 	ooldbuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
 	    sizeof(struct bufent));
 	oldbuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
 	    sizeof(struct bufent));
 	odirtybuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
 	    sizeof(uint32_t));
-	dirtybuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
-	    sizeof(uint32_t));
 	term.keypad = 0;
 	term.showcursor = 1;
-	dirtyflag = 1;
 	odirtyflag = 1;
-	dirtycount = 0;
 	odirtycount = 0;
 
 	/* Resetting character cells to a default value */
 	for (i = 0; i < term.winsz.ws_col * term.winsz.ws_row; i++) {
-		term.buf[i].attr = *teken_get_defattr(&term.tek);
-		term.buf[i].ch = ' ';
-		term.buf[i].cursor = 0;
-		term.buf[i].dirty = 0;
+		BUFFER_CELL_I(term.buf, i)->attr = *teken_get_defattr(&term.tek);
+		BUFFER_CELL_I(term.buf, i)->ch = ' ';
+		BUFFER_CELL_I(term.buf, i)->cursor = 0;
+		BUFFER_CELL_I(term.buf, i)->dirty = 0;
 	}
 	struct event *masterev, *sigintev;
 
@@ -880,7 +785,7 @@ main(int argc, char *argv[])
 	event_free(sigintev);
 	event_free(masterev);
 
-	free(term.buf);
+	bufent_buffer_destroy(term.buf);
 	free(ooldbuf);
 	free(oldbuf);
 

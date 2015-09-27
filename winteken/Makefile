@@ -1,5 +1,6 @@
 PROG=	fbteken
 SRCS=	fbteken.c ../src/rop32.c
+HDRS=	../src/bufent.h
 MAN=
 
 .if exists(${.OBJDIR}/../libteken)
