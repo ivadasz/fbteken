@@ -261,7 +261,7 @@ rop32_setcontext(struct rop_obj *self, void *mem, uint16_t w)
 	self->width = w;
 }
 
-static void
+static inline void
 rop32_alphaexpand(void *target, int towidth, uint8_t *src, int x, int y,
     int w, int h, int srcpitch, color fg, color bg)
 {
@@ -269,31 +269,35 @@ rop32_alphaexpand(void *target, int towidth, uint8_t *src, int x, int y,
 	uint8_t *mysrc = &src[y * srcpitch + x];
 	int i, j;
 	uint8_t a;
-	uint8_t r, g, b, ar, ag, ab;
+	uint8_t g, ag;
 
-	r = (fg & 0x00ff0000) >> 16;
 	g = (fg & 0x0000ff00) >> 8;
-	b = (fg & 0x000000ff) >> 0;
-	ar = (bg & 0x00ff0000) >> 16;
 	ag = (bg & 0x0000ff00) >> 8;
-	ab = (bg & 0x000000ff) >> 0;
 
-#define AASCALE(c,d,f) (((((uint16_t)(c)) * (f)) + (((uint16_t)(d)) * (255 - (f)))) / 255)
+	uint32_t myrb, myarb;
+	myrb = fg & 0x00ff00ff;
+	myarb = bg & 0x00ff00ff;
+
+/* XXX Use sse instructions instead */
+#define AASCALE(c,d,f) (((((uint16_t)(c)) * (f)) + (((uint16_t)(d)) * (255 - (f)))) >> 8)
+#define AASCALE2(c,d,f) ((((c) * (f) + (d) * (255 - (f))) >> 8) & 0x00ff00ff)
 	for (i = 0; i < h; i++) {
+		uint8_t *isrc = &mysrc[i * srcpitch];
+		uint32_t *ip = &p[i * towidth];
 		for (j = 0; j < w; j++) {
-			a = mysrc[i * srcpitch + j];
+			a = isrc[j];
 			if (a > 0) {
-				p[i * towidth + j] =
-				    (AASCALE(r,ar,a) << 16) |
-				    (AASCALE(g,ag,a) << 8) |
-				    (AASCALE(b,ab,a) << 0);
+				ip[j] =
+				    AASCALE2(myrb,myarb,a) |
+				    (AASCALE(g,ag,a) << 8);
 			}
 		}
 	}
 #undef AASCALE
+#undef AASCALE2
 }
 
-static void
+static inline void
 rop32_blit8_aa(struct rop_obj *self, point pos, uint8_t *src, int w, int h,
     int pitch, color fg, color bg)
 {
@@ -313,17 +317,20 @@ rop32_blit8_aa(struct rop_obj *self, point pos, uint8_t *src, int w, int h,
  * XXX It is often more efficient to write all pixels (because of
  *     write-combining memory type)
  */
-static void
+static inline void
 rop32_monoexpand(void *target, int towidth, uint8_t *src, int x, int y,
     int w, int h, int srcpitch, color col)
 {
 	uint32_t *p = (uint32_t *)target;
 	int i, j;
 
-	for (i = y; i < h + y; i++)
+	for (i = y; i < h + y; i++) {
+		uint8_t *isrc = &src[i * srcpitch];
+		uint32_t *ip = &p[(i - y) * towidth];
 		for (j = x; j < w + x; j++)
-			if (src[i * srcpitch + j/8] & (0x80 >> (j % 8)))
-				p[(i - y) * towidth + (j - x)] = col;
+			if (isrc[j >> 3] & (0x80 >> (j & 0x7)))
+				ip[j - x] = col;
+	}
 }
 
 static void
@@ -537,8 +544,8 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 	    ((flags & 2) && self->boldfid.file_path != NULL) ?
 	    &self->boldfid : &self->fid,
 	    self->cmap_idx, c);
-	if (idx == 0)
-		printf("cmapcache_lookup for 0x%08x failed\n", c);
+//	if (idx == 0)
+//		printf("cmapcache_lookup for 0x%08x failed\n", c);
 
 	if (self->doalpha)
 		error = FTC_SBitCache_LookupScaler(self->sbit,
@@ -556,8 +563,8 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 	}
 
 	if (sbit->buffer == 0) {
-		if (c != ' ' && c != '\0')
-			printf("Missing glyph bitmap\n");
+//		if (c != ' ' && c != '\0')
+//			printf("Missing glyph bitmap\n");
 		goto justadvance;
 	}
 
