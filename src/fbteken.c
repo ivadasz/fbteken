@@ -127,8 +127,7 @@ int initialvtnum;
 bool active = true;
 
 struct rop_obj *rop;
-int fnwidth, fnheight;
-bool fnpivot;
+int fnwidth, fnheight, fnpivot;
 struct termios origtios;
 
 teken_funcs_t tek_funcs = {
@@ -244,12 +243,24 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 	cursor = cell->cursor;
 	ch = cell->ch;
 
-	if (fnpivot) {
-		sy = framebuffer.height - col * fnwidth - (fnwidth - 1);
-		sx = row * fnheight;
-	} else {
+	switch (fnpivot) {
+	case 0:
+	default:
 		sx = col * fnwidth;
 		sy = row * fnheight;
+		break;
+	case 1:
+		sx = row * fnheight;
+		sy = framebuffer.height - col * fnwidth;
+		break;
+	case 2:
+		sx = framebuffer.width  - col * fnwidth;
+		sy = framebuffer.height - row * fnheight;
+		break;
+	case 3:
+		sx = framebuffer.width  - row * fnheight;
+		sy = col * fnwidth;
+		break;
 	}
 	if (attr->ta_format & TF_REVERSE) {
 		fg = attr->ta_bgcolor;
@@ -282,12 +293,24 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 		flags |= 1;
 	if (attr->ta_format & TF_BOLD)
 		flags |= 2;
-	if (fnpivot) {
-		rop32_rect(rop, (point){sx, sy - fnwidth},
-		    (dimension){fnheight, fnwidth}, bg);
-	} else {
+	switch (fnpivot) {
+	case 0:
+	default:
 		rop32_rect(rop, (point){sx, sy},
 		    (dimension){fnwidth, fnheight}, bg);
+		break;
+	case 1:
+		rop32_rect(rop, (point){sx, sy - fnwidth},
+		    (dimension){fnheight, fnwidth}, bg);
+		break;
+	case 2:
+		rop32_rect(rop, (point){sx - fnwidth, sy - fnheight},
+		    (dimension){fnwidth, fnheight}, bg);
+		break;
+	case 3:
+		rop32_rect(rop, (point){sx - fnheight, sy},
+		    (dimension){fnheight, fnwidth}, bg);
+		break;
 	}
 	if (ch != ' ')
 		rop32_char(rop, (point){sx, sy}, fg, bg, ch, flags);
@@ -1333,7 +1356,7 @@ main(int argc, char *argv[])
 
 	unsigned int fontheight = 16;
 	bool alpha = true;
-	bool pivot = false;
+	int pivot = 0;
 	char *kbd_layout = NULL, *kbd_options = NULL, *kbd_variant = NULL;
 
 	const char *errstr;
@@ -1343,7 +1366,7 @@ main(int argc, char *argv[])
 	unsigned int repeat_rate = 30;
 
 	/* XXX handle bitmap fonts better */
-	while ((ch = getopt(argc, argv, "aAhpPwd:r:f:F:i:k:o:v:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "aAhwd:r:f:F:i:k:o:p:v:s:")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
@@ -1378,10 +1401,10 @@ main(int argc, char *argv[])
 			kbd_options = optarg;
 			break;
 		case 'p':
-			pivot = true;
-			break;
-		case 'P':
-			pivot = false;
+			pivot = strtonum(optarg, 0, 3, &errstr);
+			if (errstr) {
+				errx(1, "pivot should be 0-3 (degrees / 90), but is %s: %s", errstr, optarg);
+			}
 			break;
 		case 'r':
 			repeat_rate = strtonum(optarg, 1, 50, &errstr);
@@ -1506,12 +1529,18 @@ main(int argc, char *argv[])
 	vtconfigure();
 	drm_backend_show(&gfxstate, &framebuffer);
 
-	if (pivot) {
-		winsize.tp_col = framebuffer.height / fnwidth;
-		winsize.tp_row = framebuffer.width / fnheight;
-	} else {
+	switch (pivot) {
+	case 0:
+	case 2:
+	default:
 		winsize.tp_col = framebuffer.width / fnwidth;
 		winsize.tp_row = framebuffer.height / fnheight;
+		break;
+	case 1:
+	case 3:
+		winsize.tp_col = framebuffer.height / fnwidth;
+		winsize.tp_row = framebuffer.width / fnheight;
+		break;
 	}
 //	winsize.tp_col = 80;
 //	winsize.tp_row = 25;

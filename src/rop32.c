@@ -65,7 +65,7 @@ struct rop_obj {
 	uint32_t cmap_idx;
 
 	bool doalpha;
-	bool dopivot;
+	int dopivot;
 };
 
 static void rop32_drawhoriz(struct rop_obj *, point, point, color);
@@ -115,16 +115,38 @@ openfont(FTC_Manager manager, MyFaceRec *fid, FT_Face *face)
 /* ARGSUSED */
 struct rop_obj *
 rop32_init(char *fp, char *boldfp, int h, int *fn_width, int *fn_height,
-    bool alpha, bool pivot)
+    bool alpha, int pivot)
 {
 	struct rop_obj *self;
 	char default_fp[] = "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf";
 	char default_boldfp[] =
 	    "/usr/local/share/fonts/dejavu/DejaVuSansMono-Bold.ttf";
-	FT_Matrix rotate_right = {
-		0 * 0x10000, -1 * 0x10000,
-		1 * 0x10000,  0 * 0x10000
-	};
+	FT_Matrix rotate;
+
+	switch (pivot) {
+	case 0:
+	default:
+		rotate = (FT_Matrix){0,0,0,0};
+		break;
+	case 1:
+		rotate = (FT_Matrix){
+			 0 * 0x10000, -1 * 0x10000,
+			 1 * 0x10000,  0 * 0x10000
+		};
+		break;
+	case 2:
+		rotate = (FT_Matrix){
+			-1 * 0x10000,  0 * 0x10000,
+			 0 * 0x10000, -1 * 0x10000
+		};
+		break;
+	case 3:
+		rotate = (FT_Matrix){
+			 0 * 0x10000,  1 * 0x10000,
+			-1 * 0x10000,  0 * 0x10000
+		};
+		break;
+	}
 
 	self = calloc(1, sizeof(struct rop_obj));
 	if (self == NULL) {
@@ -233,6 +255,10 @@ skipbold:
 	if (fn_height != NULL)
 		*fn_height = self->fontheight;
 
+	if (self->dopivot > 0) {
+		FT_Set_Transform(self->face, &rotate, NULL);
+	}
+
 	if (self->boldfid.file_path == NULL)
 		goto skipboldscaler;
 	self->boldscaler.face_id = &self->boldfid;
@@ -245,11 +271,12 @@ skipbold:
 		printf("Failed to set pixel size %d for font \"%s\"\n", h, boldfp);
 		return NULL;
 	}
-skipboldscaler:
 
-	if (self->dopivot) {
-		FT_Set_Transform(self->face, &rotate_right, NULL);
+	if (self->dopivot > 0) {
+		FT_Set_Transform(self->boldface, &rotate, NULL);
 	}
+
+skipboldscaler:
 
 	return self;
 }
@@ -572,20 +599,9 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 		goto justadvance;
 	}
 
-	if (self->dopivot) {
-		if (self->doalpha)
-			rop32_blit8_aa(self,
-			    (point){pos.x + (self->sz->metrics.ascender >> 6)+ sbit->left,
-			    pos.y - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
-		else
-			rop32_blit1(self,
-			    (point){pos.x + (self->sz->metrics.ascender >> 6)+ sbit->left,
-			    pos.y - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
-	} else {
+	switch (self->dopivot) {
+	case 0:
+	default:
 		if (self->doalpha)
 			rop32_blit8_aa(self,
 			    (point){pos.x + sbit->left,
@@ -598,21 +614,80 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 			    pos.y + (self->sz->metrics.ascender >> 6) - sbit->top},
 			    sbit->buffer, sbit->width, sbit->height,
 			    sbit->pitch, fg, bg);
+		break;
+	case 1:
+		if (self->doalpha)
+			rop32_blit8_aa(self,
+			    (point){pos.x + (self->sz->metrics.ascender >> 6) + sbit->left,
+			    pos.y - sbit->top},
+			    sbit->buffer, sbit->width, sbit->height,
+			    sbit->pitch, fg, bg);
+		else
+			rop32_blit1(self,
+			    (point){pos.x + (self->sz->metrics.ascender >> 6) + sbit->left,
+			    pos.y - sbit->top},
+			    sbit->buffer, sbit->width, sbit->height,
+			    sbit->pitch, fg, bg);
+		break;
+	case 2:
+		if (self->doalpha)
+			rop32_blit8_aa(self,
+			    (point){pos.x + sbit->left,
+			    pos.y - (self->sz->metrics.ascender >> 6) - sbit->top},
+			    sbit->buffer, sbit->width, sbit->height,
+			    sbit->pitch, fg, bg);
+		else
+			rop32_blit1(self,
+			    (point){pos.x + sbit->left,
+			    pos.y - (self->sz->metrics.ascender >> 6) - sbit->top},
+			    sbit->buffer, sbit->width, sbit->height,
+			    sbit->pitch, fg, bg);
+		break;
+	case 3:
+		if (self->doalpha)
+			rop32_blit8_aa(self,
+			    (point){pos.x - (self->sz->metrics.ascender >> 6) + sbit->left,
+			    pos.y - sbit->top},
+			    sbit->buffer, sbit->width, sbit->height,
+			    sbit->pitch, fg, bg);
+		else
+			rop32_blit1(self,
+			    (point){pos.x - (self->sz->metrics.ascender >> 6) + sbit->left,
+			    pos.y - sbit->top},
+			    sbit->buffer, sbit->width, sbit->height,
+			    sbit->pitch, fg, bg);
+		break;
 	}
 
 justadvance:
 	/* Underlining currently only works nicely for monospaced fonts */
 	if (flags & 1) {
-		if (self->dopivot) {
-			btx = pos.x + (self->sz->metrics.ascender >> 6) + 2;
-			rop32_drawvert(self, (point){btx, pos.y - self->fontwidth},
-//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
-			    (point){btx, pos.y - 1}, fg);
-		} else {
+		switch (self->dopivot) {
+		case 0:
+		default:
 			bty = pos.y + (self->sz->metrics.ascender >> 6) + 2;
 			rop32_drawhoriz(self, (point){pos.x, bty},
 //			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
 			    (point){pos.x + self->fontwidth - 1, bty}, fg);
+			break;
+		case 1:
+			btx = pos.x + (self->sz->metrics.ascender >> 6) + 2;
+			rop32_drawvert(self, (point){btx, pos.y - self->fontwidth},
+//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
+			    (point){btx, pos.y - 1}, fg);
+			break;
+		case 2:
+			bty = pos.y - 1 - (self->sz->metrics.ascender >> 6) - 2;
+			rop32_drawhoriz(self, (point){pos.x - self->fontwidth, bty},
+//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
+			    (point){pos.x - 1, bty}, fg);
+			break;
+		case 3:
+			btx = pos.x - 1 - ((self->sz->metrics.ascender >> 6) + 2);
+			rop32_drawvert(self, (point){btx, pos.y},
+//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
+			    (point){btx, pos.y + self->fontwidth - 1}, fg);
+			break;
 		}
 	}
 
