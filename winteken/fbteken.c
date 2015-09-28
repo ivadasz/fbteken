@@ -76,6 +76,7 @@ struct ww_window *window;
 
 struct rop_obj *rop;
 int fnwidth, fnheight;
+bool fnpivot;
 
 teken_funcs_t tek_funcs = {
 	fbteken_bell,
@@ -151,8 +152,13 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 	cursor = cell->cursor;
 	ch = cell->ch;
 
-	sx = col * fnwidth;
-	sy = row * fnheight;
+	if (fnpivot) {
+		sx = row * fnheight;
+		sy = (t->winsz.ws_col - (col + 1)) * fnwidth;
+	} else {
+		sx = col * fnwidth;
+		sy = row * fnheight;
+	}
 	if (attr->ta_format & TF_REVERSE) {
 		fg = attr->ta_bgcolor;
 		bg = attr->ta_fgcolor;
@@ -184,8 +190,13 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 		flags |= 1;
 	if (attr->ta_format & TF_BOLD)
 		flags |= 2;
-	rop32_rect(rop, (point){sx, sy},
-	    (dimension){fnwidth, fnheight}, bg);
+	if (fnpivot) {
+		rop32_rect(rop, (point){sx, sy},
+		    (dimension){fnheight, fnwidth}, bg);
+	} else {
+		rop32_rect(rop, (point){sx, sy},
+		    (dimension){fnwidth, fnheight}, bg);
+	}
 	if (ch != ' ')
 		rop32_char(rop, (point){sx, sy}, fg, bg, ch, flags);
 }
@@ -471,8 +482,13 @@ redraw_term(struct terminal *t)
 				render_cell(t, i % cols, i / cols);
 			}
 		}
-		ww_window_damaged(window, 0, 0,
-		    cols * fnwidth, rows * fnheight);
+		if (fnpivot) {
+			ww_window_damaged(window, 0, 0,
+			    rows * fnheight, cols * fnwidth);
+		} else {
+			ww_window_damaged(window, 0, 0,
+			    cols * fnwidth, rows * fnheight);
+		}
 	} else {
 		int x, y;
 		/* XXX Merge dirty buffers */
@@ -483,8 +499,13 @@ redraw_term(struct terminal *t)
 				x = idx % cols;
 				y = idx / cols;
 				render_cell(t, x, y);
-				ww_window_damaged(window,
-				    x*fnwidth, y*fnheight, fnwidth, fnheight);
+				if (fnpivot) {
+					ww_window_damaged(window,
+					    y*fnheight, (cols-(x+1))*fnwidth, fnheight, fnwidth);
+				} else {
+					ww_window_damaged(window,
+					    x*fnwidth, y*fnheight, fnwidth, fnheight);
+				}
 //			}
 		}
 		for (i = 0; i < t->buf->dirtycount; i++) {
@@ -494,8 +515,13 @@ redraw_term(struct terminal *t)
 				x = idx % cols;
 				y = idx / cols;
 				render_cell(t, x, y);
-				ww_window_damaged(window,
-				    x*fnwidth, y*fnheight, fnwidth, fnheight);
+				if (fnpivot) {
+					ww_window_damaged(window,
+					    y*fnheight, (cols-(x+1))*fnwidth, fnheight, fnwidth);
+				} else {
+					ww_window_damaged(window,
+					    x*fnwidth, y*fnheight, fnwidth, fnheight);
+				}
 //			}
 		}
 		for (i = 0; i < cols * rows; i++) {
@@ -561,8 +587,9 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s [-a | -A] [-hw] [-f fontfile [-F bold_fontfile]] "
-	    "[-s fontsize] [-c columns] [-r rows]\n",
+	    "usage: %s [-a | -A] [-p | -P] [-hw] "
+	    "[-f fontfile [-F bold_fontfile]] [-s fontsize] [-c columns] "
+	    "[-r rows]\n",
 	    getprogname());
 	exit(1);
 }
@@ -581,6 +608,7 @@ main(int argc, char *argv[])
 
 	unsigned int fontheight = 16;
 	bool alpha = true;
+	bool pivot = false;
 
 	const char *errstr;
 	struct stat fontstat;
@@ -588,7 +616,7 @@ main(int argc, char *argv[])
 	struct window_state winstate;
 
 	/* XXX handle bitmap fonts better */
-	while ((ch = getopt(argc, argv, "aAhwf:F:s:c:r:")) != -1) {
+	while ((ch = getopt(argc, argv, "aAhpPwf:F:s:c:r:")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
@@ -608,6 +636,12 @@ main(int argc, char *argv[])
 			break;
 		case 'F':
 			boldfont = optarg;
+			break;
+		case 'p':
+			pivot = true;
+			break;
+		case 'P':
+			pivot = false;
 			break;
 		case 'r':
 			rows = strtonum(optarg, 2, 512, &errstr);
@@ -705,29 +739,45 @@ main(int argc, char *argv[])
 
 	/* XXX handle errors (e.g. when invalid font paths are given) */
 	rop = rop32_init(normalfont, boldfont, fontheight,
-	    &fnwidth, &fnheight, alpha);
+	    &fnwidth, &fnheight, alpha, pivot);
 	if (rop == NULL)
 		errx(1, "rop32_init failed, aborting");
+	fnpivot = pivot;
 
 	base = ww_base_create(NULL, kbdfun, pointerfun);
 	if (base == NULL)
 		errx(1, "ww_base_create failed\n");
 	ww_base_set_keyrepeat(base, 200, 50);
 	winstate.compstate = ww_compose_state_create(base);
-	window = ww_window_create(base, &winstate, fnwidth * columns,
-	    fnheight * rows, draw);
+	if (pivot) {
+		window = ww_window_create(base, &winstate, fnheight * rows,
+		    fnwidth * columns, draw);
+	} else {
+		window = ww_window_create(base, &winstate, fnwidth * columns,
+		    fnheight * rows, draw);
+	}
 	if (window == NULL)
 		errx(1, "ww_window_create failed\n");
-	rop32_setclip(rop, (point){0,0},
-	    (point){fnwidth*columns, fnheight*rows});
+	if (pivot) {
+		rop32_setclip(rop, (point){0,0},
+		    (point){fnheight*rows, fnwidth*columns});
+	} else {
+		rop32_setclip(rop, (point){0,0},
+		    (point){fnwidth*columns, fnheight*rows});
+	}
 
 	winsize.tp_col = columns;
 	winsize.tp_row = rows;
 	teken_set_winsize(&term.tek, &winsize);
         term.winsz.ws_col = winsize.tp_col;
         term.winsz.ws_row = winsize.tp_row;
-        term.winsz.ws_xpixel = term.winsz.ws_col * fnwidth;
-        term.winsz.ws_ypixel = term.winsz.ws_row * fnheight;
+	if (pivot) {
+		term.winsz.ws_xpixel = term.winsz.ws_row * fnheight;
+		term.winsz.ws_ypixel = term.winsz.ws_col * fnwidth;
+	} else {
+		term.winsz.ws_xpixel = term.winsz.ws_col * fnwidth;
+		term.winsz.ws_ypixel = term.winsz.ws_row * fnheight;
+	}
 	ioctl (term.amaster, TIOCSWINSZ, &term.winsz);
 	term.buf = bufent_buffer_create(term.winsz.ws_col, term.winsz.ws_row);
 	ooldbuf = calloc(term.winsz.ws_col * term.winsz.ws_row,
