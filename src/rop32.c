@@ -429,10 +429,10 @@ rop32_line(struct rop_obj *self, point start, point end, color col)
 	uint32_t *p = (uint32_t *)self->fb;
 
 	if (start.x == end.x) {
-		rop32_drawhoriz(self, start, end, col);
+		rop32_drawvert(self, start, end, col);
 		return;
 	} else if (start.y == end.y) {
-		rop32_drawvert(self, start, end, col);
+		rop32_drawhoriz(self, start, end, col);
 		return;
 	}
 
@@ -571,6 +571,9 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 	int16_t bty;
 	int16_t btx;
 
+	int char_x_offset, char_y_offset;
+	point underline_from_point, underline_to_point;
+
 	idx = FTC_CMapCache_Lookup(self->cmc,
 	    ((flags & 2) && self->boldfid.file_path != NULL) ?
 	    &self->boldfid : &self->fid,
@@ -602,62 +605,39 @@ rop32_char(struct rop_obj *self, point pos, color fg, color bg, uint32_t c,
 	switch (self->dopivot) {
 	case 0:
 	default:
-		if (self->doalpha)
-			rop32_blit8_aa(self,
-			    (point){pos.x + sbit->left,
-			    pos.y + (self->sz->metrics.ascender >> 6) - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
-		else
-			rop32_blit1(self,
-			    (point){pos.x + sbit->left,
-			    pos.y + (self->sz->metrics.ascender >> 6) - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
+		char_x_offset = 0;
+		char_y_offset = (self->sz->metrics.ascender >> 6);
 		break;
 	case 1:
-		if (self->doalpha)
-			rop32_blit8_aa(self,
-			    (point){pos.x + (self->sz->metrics.ascender >> 6) + sbit->left,
-			    pos.y - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
-		else
-			rop32_blit1(self,
-			    (point){pos.x + (self->sz->metrics.ascender >> 6) + sbit->left,
-			    pos.y - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
+		char_x_offset = (self->sz->metrics.ascender >> 6);
+		char_y_offset = 0;
 		break;
 	case 2:
-		if (self->doalpha)
-			rop32_blit8_aa(self,
-			    (point){pos.x + sbit->left,
-			    pos.y - (self->sz->metrics.ascender >> 6) - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
-		else
-			rop32_blit1(self,
-			    (point){pos.x + sbit->left,
-			    pos.y - (self->sz->metrics.ascender >> 6) - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
+		char_x_offset = 0;
+		char_y_offset = 0 - (self->sz->metrics.ascender >> 6);
 		break;
 	case 3:
-		if (self->doalpha)
-			rop32_blit8_aa(self,
-			    (point){pos.x - (self->sz->metrics.ascender >> 6) + sbit->left,
-			    pos.y - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
-		else
-			rop32_blit1(self,
-			    (point){pos.x - (self->sz->metrics.ascender >> 6) + sbit->left,
-			    pos.y - sbit->top},
-			    sbit->buffer, sbit->width, sbit->height,
-			    sbit->pitch, fg, bg);
+		char_x_offset = 0 - (self->sz->metrics.ascender >> 6);
+		char_y_offset = 0;
 		break;
 	}
+
+	if (self->doalpha)
+		rop32_blit8_aa(self,
+		    (point) {
+			pos.x + sbit->left + char_x_offset, 
+			pos.y - sbit->top  + char_y_offset
+		    }, 
+		    sbit->buffer, sbit->width, sbit->height,
+		    sbit->pitch, fg, bg);
+	else
+		rop32_blit1(self,
+		    (point) {
+			pos.x + sbit->left + char_x_offset, 
+			pos.y - sbit->top  + char_y_offset
+		    }, 
+		    sbit->buffer, sbit->width, sbit->height,
+		    sbit->pitch, fg, bg);
 
 justadvance:
 	/* Underlining currently only works nicely for monospaced fonts */
@@ -666,29 +646,27 @@ justadvance:
 		case 0:
 		default:
 			bty = pos.y + (self->sz->metrics.ascender >> 6) + 2;
-			rop32_drawhoriz(self, (point){pos.x, bty},
-//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
-			    (point){pos.x + self->fontwidth - 1, bty}, fg);
+			underline_from_point = (point){pos.x,                       bty};
+			underline_to_point   = (point){pos.x + self->fontwidth - 1, bty};
 			break;
 		case 1:
 			btx = pos.x + (self->sz->metrics.ascender >> 6) + 2;
-			rop32_drawvert(self, (point){btx, pos.y - self->fontwidth},
-//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
-			    (point){btx, pos.y - 1}, fg);
+			underline_from_point = (point){btx, pos.y - self->fontwidth};
+			underline_to_point   = (point){btx, pos.y - 1};
 			break;
 		case 2:
 			bty = pos.y - 1 - (self->sz->metrics.ascender >> 6) - 2;
-			rop32_drawhoriz(self, (point){pos.x - self->fontwidth, bty},
-//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
-			    (point){pos.x - 1, bty}, fg);
+			underline_from_point = (point){pos.x - self->fontwidth, bty};
+			underline_to_point   = (point){pos.x - 1,               bty};
 			break;
 		case 3:
 			btx = pos.x - 1 - ((self->sz->metrics.ascender >> 6) + 2);
-			rop32_drawvert(self, (point){btx, pos.y},
-//			    (point){pos.x + sbit->xadvance - 1, bty - 1}, fg);
-			    (point){btx, pos.y + self->fontwidth - 1}, fg);
+			underline_from_point = (point){btx, pos.y};
+			underline_to_point   = (point){btx, pos.y + self->fontwidth - 1};
 			break;
 		}
+
+		rop32_line(self, underline_from_point, underline_to_point, fg);
 	}
 
 	return (point){pos.x + sbit->xadvance, pos.y + sbit->yadvance};
