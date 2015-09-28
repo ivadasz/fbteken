@@ -128,6 +128,7 @@ bool active = true;
 
 struct rop_obj *rop;
 int fnwidth, fnheight;
+bool fnpivot;
 struct termios origtios;
 
 teken_funcs_t tek_funcs = {
@@ -243,8 +244,13 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 	cursor = cell->cursor;
 	ch = cell->ch;
 
-	sx = col * fnwidth;
-	sy = row * fnheight;
+	if (fnpivot) {
+		sy = framebuffer.height - col * fnwidth - (fnwidth - 1);
+		sx = row * fnheight;
+	} else {
+		sx = col * fnwidth;
+		sy = row * fnheight;
+	}
 	if (attr->ta_format & TF_REVERSE) {
 		fg = attr->ta_bgcolor;
 		bg = attr->ta_fgcolor;
@@ -276,8 +282,13 @@ render_cell(struct terminal *t, uint16_t col, uint16_t row)
 		flags |= 1;
 	if (attr->ta_format & TF_BOLD)
 		flags |= 2;
-	rop32_rect(rop, (point){sx, sy},
-	    (dimension){fnwidth, fnheight}, bg);
+	if (fnpivot) {
+		rop32_rect(rop, (point){sx, sy - fnwidth},
+		    (dimension){fnheight, fnwidth}, bg);
+	} else {
+		rop32_rect(rop, (point){sx, sy},
+		    (dimension){fnwidth, fnheight}, bg);
+	}
 	if (ch != ' ')
 		rop32_char(rop, (point){sx, sy}, fg, bg, ch, flags);
 }
@@ -1322,6 +1333,7 @@ main(int argc, char *argv[])
 
 	unsigned int fontheight = 16;
 	bool alpha = true;
+	bool pivot = false;
 	char *kbd_layout = NULL, *kbd_options = NULL, *kbd_variant = NULL;
 
 	const char *errstr;
@@ -1331,7 +1343,7 @@ main(int argc, char *argv[])
 	unsigned int repeat_rate = 30;
 
 	/* XXX handle bitmap fonts better */
-	while ((ch = getopt(argc, argv, "aAhwd:r:f:F:i:k:o:v:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "aAhpPwd:r:f:F:i:k:o:v:s:")) != -1) {
 		switch (ch) {
 		case 'a':
 			alpha = true;
@@ -1364,6 +1376,12 @@ main(int argc, char *argv[])
 			break;
 		case 'o':
 			kbd_options = optarg;
+			break;
+		case 'p':
+			pivot = true;
+			break;
+		case 'P':
+			pivot = false;
 			break;
 		case 'r':
 			repeat_rate = strtonum(optarg, 1, 50, &errstr);
@@ -1472,13 +1490,14 @@ main(int argc, char *argv[])
 
 	/* XXX handle errors (e.g. when invalid font paths are given) */
 	rop = rop32_init(normalfont, boldfont, fontheight,
-	    &fnwidth, &fnheight, alpha);
+	    &fnwidth, &fnheight, alpha, pivot);
 	if (rop == NULL)
 		errx(1, "rop32_init failed, aborting");
 
 	if (drm_backend_init(&gfxstate) != 0) {
 		errx(1, "Failed to initialize drm backend");
 	}
+	fnpivot = pivot;
 	drm_backend_allocfb(&gfxstate, &framebuffer);
 	rop32_setclip(rop, (point){0,0},
 	    (point){framebuffer.width, framebuffer.height});
@@ -1487,13 +1506,19 @@ main(int argc, char *argv[])
 	vtconfigure();
 	drm_backend_show(&gfxstate, &framebuffer);
 
-	winsize.tp_col = framebuffer.width / fnwidth;
-	winsize.tp_row = framebuffer.height / fnheight;
+	if (pivot) {
+		winsize.tp_col = framebuffer.height / fnwidth;
+		winsize.tp_row = framebuffer.width / fnheight;
+	} else {
+		winsize.tp_col = framebuffer.width / fnwidth;
+		winsize.tp_row = framebuffer.height / fnheight;
+	}
 //	winsize.tp_col = 80;
 //	winsize.tp_row = 25;
 	teken_set_winsize(&term.tek, &winsize);
         term.winsz.ws_col = winsize.tp_col;
         term.winsz.ws_row = winsize.tp_row;
+	/* XXX: Should ws_xpixel and ws_ypixel report the physical dimensions or the logical dimensions after pivot? */
         term.winsz.ws_xpixel = term.winsz.ws_col * fnwidth;
         term.winsz.ws_ypixel = term.winsz.ws_row * fnheight;
 	ioctl (term.amaster, TIOCSWINSZ, &term.winsz);
