@@ -16,6 +16,6 @@ WARNS?=	6
 
 LDADD+=	${LIBTEKEN}
 LDADD+=	-L/usr/local/lib
-LDADD+=	-lpthread -lutil -levent -lwaywin -lfreetype -lxkbcommon
+LDADD+=	-lutil -levent -lwaywin -lfreetype -lxkbcommon
 
 .include <bsd.prog.mk>
