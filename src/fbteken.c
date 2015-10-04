@@ -61,9 +61,9 @@
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-compose.h>
 
+#include <kbdev.h>
 #include "fbdraw.h"
 #include "../libteken/teken.h"
-#include "../libkbdev/kbdev.h"
 
 struct bufent {
 	teken_char_t ch;
