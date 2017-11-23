@@ -1,3 +1,3 @@
-SUBDIR=	libkbdev libteken src
+SUBDIR=	libteken src
 
 .include <bsd.subdir.mk>

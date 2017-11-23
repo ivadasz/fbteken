@@ -59,10 +59,11 @@
 #include <event2/event.h>
 
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-compose.h>
 
+#include <kbdev.h>
 #include "fbdraw.h"
 #include "../libteken/teken.h"
-#include "../libkbdev/kbdev.h"
 
 struct bufent {
 	teken_char_t ch;
@@ -114,6 +115,8 @@ struct kbdev_state *kbdst;
 struct xkb_context *ctx;
 struct xkb_keymap *keymap;
 struct xkb_state *state;
+struct xkb_compose_table *comptable;
+struct xkb_compose_state *compstate;
 
 int idle_timeout = 0;	/* idle timeout (in s) */
 
@@ -703,6 +706,46 @@ struct timeval repdelay = { .tv_sec = 0, .tv_usec = 200000 };
 /* 50Hz repeat rate */
 struct timeval reprate = { .tv_sec = 0, .tv_usec = 20000 };
 
+static int
+do_handle_keysym(xkb_keysym_t sym, xkb_keycode_t code, uint8_t *buf, int len)
+{
+	enum xkb_compose_feed_result feedres;
+	enum xkb_compose_status compres;
+	int n;
+
+	if (compstate == NULL)
+		goto nocompose;
+
+	feedres = xkb_compose_state_feed(compstate, sym);
+	if (feedres == XKB_COMPOSE_FEED_IGNORED)
+		goto nocompose;
+
+	compres = xkb_compose_state_get_status(compstate);
+	if (compres == XKB_COMPOSE_CANCELLED) {
+		xkb_compose_state_reset(compstate);
+		return 0;
+	} else if (compres == XKB_COMPOSE_COMPOSING) {
+		return 0;
+	} else if (compres == XKB_COMPOSE_COMPOSED) {
+		sym = xkb_compose_state_get_one_sym(compstate);
+		n = handle_term_special_keysym(sym, buf, len);
+		if (n > 0)
+			return n;
+		return xkb_compose_state_get_utf8(compstate, buf, len);
+	}
+
+nocompose:
+	n = handle_term_special_keysym(sym, buf, len);
+	if (n > 0)
+		return n;
+
+	/*
+	 * XXX In X the left Alt key is an additional modifier key,
+	 *     we might want to optionally emulate that behaviour.
+	 */
+	return fbteken_key_get_utf8(code, buf, len);
+}
+
 /* Key repeat handling */
 static void
 keyrepeat(evutil_socket_t fd __unused, short events __unused,
@@ -712,11 +755,7 @@ keyrepeat(evutil_socket_t fd __unused, short events __unused,
 	int n;
 
 	if (repkeycode != 0) {
-		n = handle_term_special_keysym(repkeysym, out, sizeof(out));
-		if (n <= 0) {
-			/* XXX handle composition (e.g. accents) */
-			n = fbteken_key_get_utf8(repkeycode, out, sizeof(out));
-		}
+		n = do_handle_keysym(repkeysym, repkeycode, out, sizeof(out));
 		evtimer_add(repeatev, &reprate);
 		if (n > 0) {
 			/* XXX Make sure we write everything */
@@ -851,7 +890,7 @@ drm_set_dpms(struct drm_state *dst, int level)
 static int
 handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 {
-	int cnt = 0, switchvt;
+	int switchvt;
 
 	/* Reset idle timeout */
 	if (idleev != NULL && active)
@@ -868,16 +907,7 @@ handle_keypress(xkb_keycode_t code, xkb_keysym_t sym, uint8_t *buf, int len)
 		ioctl(ttyfd, VT_ACTIVATE, switchvt);
 		return 0;
 	}
-	cnt = handle_term_special_keysym(sym, buf, len);
-	if (cnt > 0)
-		return cnt;
-
-	/*
-	 * XXX In X the left Alt key is an additional modifier key,
-	 *     we might want to optionally emulate that behaviour.
-	 */
-	/* XXX handle composition (e.g. accents) */
-	return fbteken_key_get_utf8(code, buf, len);
+	return do_handle_keysym(sym, code, buf, len);
 }
 
 /* Reading keyboard input from the tty which was set into raw mode */
@@ -1097,15 +1127,32 @@ xkb_init(char *layout, char *options, char *variant)
 	state = xkb_state_new(keymap);
 	if (state == NULL)
 		errx(1, "xkb_state_new failed");
+
+	const char *locale = NULL;
+	locale = getenv("LC_ALL");
+	if (!locale)
+		locale = getenv("LC_CTYPE");
+	if (!locale)
+		locale = getenv("LANG");
+	if (!locale)
+		locale = "C";
+	comptable = xkb_compose_table_new_from_locale(ctx, locale,
+	    XKB_COMPOSE_COMPILE_NO_FLAGS);
+	if (comptable != NULL) {
+		compstate = xkb_compose_state_new(comptable,
+		    XKB_COMPOSE_STATE_NO_FLAGS);
+	}
 }
 
 static void
 xkb_finish(void)
 {
-	if (state != NULL) {
-		xkb_state_unref(state);
-		state = NULL;
-	}
+	xkb_compose_state_unref(compstate);
+	compstate = NULL;
+	xkb_compose_table_unref(comptable);
+	comptable = NULL;
+	xkb_state_unref(state);
+	state = NULL;
 	if (keymap != NULL) {
 		xkb_keymap_unref(keymap);
 		keymap = NULL;
