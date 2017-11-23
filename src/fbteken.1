@@ -39,6 +39,7 @@
 .Op Fl i Ar idle_timeout
 .Op Fl k Ar kbd_layout
 .Op Fl o Ar kbd_options
+.Op Fl p Ar rotation
 .Op Fl r Ar rate
 .Op Fl s Ar fontsize
 .Op Fl v Ar kbd_variant
@@ -107,6 +108,8 @@ Specifies the keyboard options (corresponding to the
 .Li XkbOptions
 setting in
 .Xr xorg.conf 5 ).
+.It Fl p Ar rotation
+Specifies the number of 90-degree (right) angles the screen has been pivoted/rotated clock-wise: 0 (0), 1 (90), 2 (180), 3 (270). The viewport will be rotated counter-click-wise to compensate. This relies on freetype to do the glyph rotation, so it currently only works for scalable fonts, not bitmap fonts.
 .It Fl r Ar rate
 Specifies the number of key repeats per second.
 .It Fl s Ar fontsize
