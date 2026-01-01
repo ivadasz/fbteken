@@ -43,6 +43,8 @@
 
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/mman.h>
 #ifdef __linux__
 #include <linux/vt.h>
 #else
@@ -50,7 +52,6 @@
 #include <sys/consio.h>
 #endif
 
-#include <libkms/libkms.h>
 #include <drm_fourcc.h>
 
 #include <xf86drm.h>
@@ -84,7 +85,7 @@ void	fbteken_param(void *thunk, int param, unsigned int val);
 void	fbteken_respond(void *thunk, const void *arg, size_t sz);
 
 struct drm_framebuffer {
-	struct kms_bo *bo;
+	uint64_t size;
 	unsigned handles[4], pitches[4], offsets[4];
 	void *plane;
 	uint32_t width, height;
@@ -93,7 +94,6 @@ struct drm_framebuffer {
 
 struct drm_state {
 	int fd;
-	struct kms_driver *kms;
 	drmModeCrtcPtr crtc;
 	drmModeConnectorPtr conn;
 	int oldbuffer_id;
@@ -1014,8 +1014,8 @@ drmread(evutil_socket_t fd __unused, short events __unused, void *arg __unused)
 	};
 
 	if (drmHandleEvent(gfxstate.fd, &evctx) != 0) {
-		warnx("drmHandleEvent failed");
-		event_base_loopbreak(evbase);
+		warnx("drmHandleEvent failed fd=%d", gfxstate.fd);
+		//event_base_loopbreak(evbase);
 	}
 }
 
@@ -1158,15 +1158,25 @@ drm_backend_init(struct drm_state *dst)
 	drmModeEncoderPtr enc;
 	int fd, i;
 
+#if 0
 	fd = drmOpen("i915", NULL);
 	if (fd < 0) {
 		perror("drmOpen(\"i915\", NULL)");
 		fd = drmOpen("radeon", NULL);
 		if (fd < 0) {
 			perror("drmOpen(\"radeon\", NULL)");
-			return 1;
+			fd = drmOpen("amdgpu", NULL);
+			if (fd < 0) {
+				perror("drmOpen(\"amdgpu\", NULL)");
+				return 1;
+			}
 		}
 	}
+#else
+	fd = open("/dev/dri/card0", O_RDWR);
+	if (fd < 0)
+		err(EXIT_FAILURE, "open(/dev/dri/card0)");
+#endif
 
 	dst->fd = fd;
 	dst->dpms_mode = DRM_MODE_DPMS_ON;
@@ -1276,15 +1286,12 @@ drm_backend_init(struct drm_state *dst)
 	printf("type: %u\n", gfxstate.crtc->mode.type);
 #endif
 
-	kms_create(dst->fd, &dst->kms);
-
 	return 0;
 }
 
 static void
 drm_backend_finish(struct drm_state *dst)
 {
-	kms_destroy(&dst->kms);
 	drmModeFreeConnector(dst->conn);
 	drmModeFreeCrtc(dst->crtc);
 	drmClose(dst->fd);
@@ -1292,24 +1299,38 @@ drm_backend_finish(struct drm_state *dst)
 static void
 drm_backend_allocfb(struct drm_state *dst, struct drm_framebuffer *fb)
 {
+	uint64_t map_offset;
+	int error;
+
 	fb->width = dst->crtc->mode.hdisplay;
 	fb->height = dst->crtc->mode.vdisplay;
 
+#if 0
 	unsigned bo_attribs[] = {
 		KMS_WIDTH,	fb->width,
 		KMS_HEIGHT,	fb->height,
 		KMS_BO_TYPE,	KMS_BO_TYPE_SCANOUT_X8R8G8B8,
 		KMS_TERMINATE_PROP_LIST
 	};
-	kms_bo_create(dst->kms, bo_attribs, &fb->bo);
-	kms_bo_get_prop(fb->bo, KMS_HANDLE, &fb->handles[0]);
-	kms_bo_get_prop(fb->bo, KMS_PITCH, &fb->pitches[0]);
+#endif
+	error = drmModeCreateDumbBuffer(dst->fd, fb->width, fb->height, 32, 0,
+	    &fb->handles[0], &fb->pitches[0], &fb->size);
+	if (error) {
+		err(EXIT_FAILURE, "drmModeCreateDumbBuffer");
+	}
 #if 0
 	printf("fb->pitches[0] = %u\n", fb->pitches[0]);
 	printf("fb->handles[0] = %u\n", fb->handles[0]);
 #endif
 	fb->offsets[0] = 0;
-	kms_bo_map(fb->bo, &fb->plane);
+	error = drmModeMapDumbBuffer(dst->fd, fb->handles[0], &map_offset);
+	if (error) {
+		err(EXIT_FAILURE, "drmModeMapDumbBuffer");
+	}
+	fb->plane = mmap(NULL, fb->size, PROT_READ|PROT_WRITE, 0, dst->fd, map_offset);
+	if (fb->plane == NULL) {
+		err(EXIT_FAILURE, "mmap");
+	}
 	drmModeAddFB2(dst->fd, fb->width, fb->height, DRM_FORMAT_XRGB8888,
 	    fb->handles, fb->pitches, fb->offsets,
 	    &fb->fbid, 0);
@@ -1319,8 +1340,8 @@ static void
 drm_backend_destroyfb(struct drm_state *dst, struct drm_framebuffer *fb)
 {
 	drmModeRmFB(dst->fd, fb->fbid);
-	kms_bo_unmap(fb->bo);
-	kms_bo_destroy(&fb->bo);
+	munmap(fb->plane, fb->size);
+	drmModeDestroyDumbBuffer(dst->fd, fb->handles[0]);
 }
 
 static int

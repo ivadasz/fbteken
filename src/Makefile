@@ -8,6 +8,7 @@ LIBTEKEN=${.OBJDIR}/../libteken/libteken.a
 LIBTEKEN=${.CURDIR}/../libteken/libteken.a
 .endif
 
+CFLAGS+=	-I/usr/pkg/include
 CFLAGS+=	-I/usr/local/include
 CFLAGS+=	-I/usr/local/include/libdrm
 CFLAGS+=	-I/usr/local/include/freetype2
@@ -15,7 +16,7 @@ CFLAGS+=	-I/usr/local/include/freetype2
 WARNS?=	6
 
 LDADD+=	${LIBTEKEN}
-LDADD+=	-L/usr/local/lib
-LDADD+=	-lpthread -lutil -levent -lkms -ldrm -lfreetype -lxkbcommon -lkbdev
+LDADD+=	-L/usr/local/lib -L/usr/pkg/lib
+LDADD+=	-lpthread -lutil -levent -ldrm -lfreetype -lxkbcommon -lkbdev
 
 .include <bsd.prog.mk>
