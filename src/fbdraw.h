@@ -43,7 +43,7 @@ typedef struct point dimension;
 typedef struct point vector;
 typedef uint32_t color;
 
-struct rop_obj *rop32_init(char *, char *, int, int *, int *, bool);
+struct rop_obj *rop32_init(char *, char *, int, int *, int *, bool, int);
 void rop32_setclip(struct rop_obj *, point, point);
 void rop32_setcontext(struct rop_obj *, void *, uint16_t);
 void rop32_line(struct rop_obj *, point, point, color);
